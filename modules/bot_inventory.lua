@@ -59,12 +59,42 @@ local function friendly_web_error(reason)
         return 'coroutine execution failed'
     elseif reason == 'coroutine_creation_failed' then
         return 'unable to create coroutine'
+    elseif reason == 'ssl_not_available' then
+        return 'https unsupported (missing LuaSec)'
+    elseif reason == 'handshake_failed' then
+        return 'TLS handshake failed'
+    elseif reason == 'connect_failed' then
+        return 'connection failed'
+    elseif reason == 'send_failed' then
+        return 'send failed'
+    elseif reason == 'receive_failed' then
+        return 'receive failed'
     elseif reason == 'request_failed' then
         return 'http request failed'
     elseif reason == 'no_items_found' then
         return 'web response contained no equipped items'
     end
     return tostring(reason)
+end
+
+-- Simple blocking HTTP request function
+local function fetch_http_body(url)
+    if not http then
+        return false, 'http_unavailable'
+    end
+    if not url then
+        return false, 'invalid_url'
+    end
+
+    local body, code, headers, status = http.request(url)
+    if not body then
+        return false, status or code or 'request_failed'
+    end
+    if tonumber(code) ~= 200 then
+        return false, status or string.format('http_%s', tostring(code))
+    end
+
+    return true, body, code, status
 end
 
 local function apply_web_botlist(result, clean_name)
@@ -203,7 +233,7 @@ local function parse_bots_from_html(html)
 end
 
 local function try_fetch_botlist_from_web()
-    if not http then
+    if not http and not copas_http then
         return false, 'http_unavailable'
     end
     if not should_use_web_botlist() then
@@ -221,9 +251,9 @@ local function try_fetch_botlist_from_web()
     end
 
     local url = string.format('https://karanaeq.com/Char/index.php?page=bots&char=%s', sanitized)
-    local body, code, _, status = http.request(url)
-    if not body then
-        return false, status or code or 'request_failed'
+    local ok, body, code, status = fetch_http_body(url)
+    if not ok then
+        return false, body -- error message is in body when ok is false
     end
     if tonumber(code) ~= 200 then
         return false, status or string.format('http_%s', tostring(code))
@@ -275,7 +305,6 @@ end
 
 local function parse_bot_inventory_html(botName, html)
     if not html or html == '' then return {} end
-
     local collapsed = html:gsub('%s+', ' ')
     local items = {}
 
@@ -392,6 +421,21 @@ local function build_inventory_from_response(botName, body, code, status)
     return true, inventory
 end
 
+local function targetBotByName(botName)
+    if not botName or botName == "" then return end
+
+    local spawnLookup = mq.TLO.Spawn(string.format("= %s", botName))
+    local ok, spawnId = pcall(function()
+        return spawnLookup and spawnLookup.ID and spawnLookup.ID()
+    end)
+
+    if ok and spawnId and spawnId > 0 then
+        mq.cmdf("/target id %d", spawnId)
+    else
+        mq.cmdf('/target "%s"', botName)
+    end
+end
+
 local function apply_web_inventory(botName, inventory)
     local previous = BotInventory.bot_inventories[botName]
     BotInventory.bot_inventories[botName] = inventory
@@ -444,14 +488,12 @@ local function handle_web_inventory_failure(botName, reason)
         BotInventory.onBotFailure(botName, friendly)
     end
 
-    -- fallback to in-game inventory request
-    start_inventory_fallback(botName)
+    -- fallback to in-game inventory request (disabled during HTTP testing)
+    print(string.format('[BotInventory DEBUG] Fallback to in-game disabled for testing: %s', botName))
+    -- start_inventory_fallback(botName)
 end
 
 local function try_fetch_bot_inventory_from_web(botName)
-    if not http then
-        return false, 'http_unavailable'
-    end
     if not should_use_web_botlist() then
         return false, 'unsupported_server'
     end
@@ -462,9 +504,9 @@ local function try_fetch_bot_inventory_from_web(botName)
     end
 
     local url = string.format('https://karanaeq.com/Char/index.php?page=bot&bot=%s', encoded)
-    local body, code, _, status = http.request(url)
-    if BotInventory._debug then
-        print(string.format('[BotInventory DEBUG] Fetching inventory for %s (url=%s, code=%s, status=%s)', botName, url, tostring(code), tostring(status)))
+    local ok, body, code, status = fetch_http_body(url)
+    if not ok then
+        return false, body
     end
 
     return build_inventory_from_response(botName, body, code, status)
@@ -634,20 +676,6 @@ local function buildExportSnapshot()
     return snapshot
 end
 
-local function targetBotByName(botName)
-    if not botName or botName == "" then return end
-
-    local spawnLookup = mq.TLO.Spawn(string.format("= %s", botName))
-    local ok, spawnId = pcall(function()
-        return spawnLookup and spawnLookup.ID and spawnLookup.ID()
-    end)
-
-    if ok and spawnId and spawnId > 0 then
-        mq.cmdf("/target id %d", spawnId)
-    else
-        mq.cmdf('/target "%s"', botName)
-    end
-end
 
 local function defaultExportFilename(format)
     local ext = (format and format:lower()) or "json"
@@ -992,6 +1020,7 @@ function BotInventory.refreshBotList()
         BotInventory._web_botlist_coroutine = coroutine.create(function()
             coroutine.yield()
             local success, result, clean_name = try_fetch_botlist_from_web()
+            coroutine.yield()
             if success then
                 apply_web_botlist(result, clean_name)
             else
@@ -1052,6 +1081,7 @@ function BotInventory.requestBotInventory(botName)
         local co = coroutine.create(function()
             coroutine.yield()
             local success, payload = try_fetch_bot_inventory_from_web(botName)
+            coroutine.yield()
             if success then
                 apply_web_inventory(botName, payload)
             else
@@ -1284,6 +1314,7 @@ function BotInventory.getBotEquippedItem(botName, slotID)
 end
 
 function BotInventory.process()
+
     if BotInventory._web_botlist_coroutine and coroutine.status(BotInventory._web_botlist_coroutine) ~= 'dead' then
         local ok, err = coroutine.resume(BotInventory._web_botlist_coroutine)
         if not ok then
@@ -1506,6 +1537,8 @@ end
 
 function BotInventory.init()
     if BotInventory.initialized then return true end
+    
+    print('[BotInventory DEBUG] HTTP system initialized using socket.http')
 
     mq.event("GetBotList", "Bot #1# #*# #2# is a Level #3# #4# #5# #6# owned by You.#*", BotInventory.getBotListEvent)
     mq.event("BotInventory", "Slot #1# (#2#) #*#", displayBotInventory, { keepLinks = true })

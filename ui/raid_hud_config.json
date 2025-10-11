@@ -1,88 +1,106 @@
 {
+  "colors":{
+    "header":{
+      "g":0.8,
+      "r":0.8,
+      "b":0.3,
+      "a":1
+    },
+    "online":{
+      "g":0.9,
+      "r":0.9,
+      "b":0.9,
+      "a":1
+    },
+    "offline":{
+      "g":0.5,
+      "r":0.5,
+      "b":0.5,
+      "a":0.7
+    },
+    "self":{
+      "g":0.9,
+      "r":0.3,
+      "b":0.3,
+      "a":1
+    },
+    "tank":{
+      "g":0.6,
+      "r":0.6,
+      "b":1,
+      "a":1
+    },
+    "healer":{
+      "g":1,
+      "r":0.3,
+      "b":0.3,
+      "a":1
+    },
+    "dps":{
+      "g":0.7,
+      "r":1,
+      "b":0.3,
+      "a":1
+    }
+  },
   "display":{
+    "class_width":50,
+    "name_class_width":160,
+    "sort_mode":"alphabetical",
+    "min_window_height":120,
+    "max_window_height":800,
+    "line_spacing":0,
+    "enable_group_layout":false,
+    "groups_per_row":3,
+    "group_spacing":10,
+    "grouping_method":"auto",
+    "separate_group_windows":false,
+    "max_groups_to_show":6,
+    "group_window_spacing":20,
     "show_hps":false,
+    "hps_width":60,
+    "auto_size":true,
+    "show_class_names":false,
+    "show_name_with_class":false,
+    "compact_mode":false,
+    "max_entries":72,
+    "refresh_rate":1,
+    "hps_window":10,
     "show_mana":true,
     "show_distance":true,
     "show_offline":false,
     "name_width":120,
-    "hps_width":60,
     "mana_width":60,
-    "distance_width":70,
-    "class_width":50,
-    "auto_size":true,
-    "min_window_height":120,
-    "max_window_height":800,
-    "line_spacing":0,
-    "sort_mode":"alphabetical",
-    "show_class_names":false,
-    "compact_mode":false,
-    "max_entries":72,
-    "refresh_rate":1,
-    "hps_window":10
+    "distance_width":70
+  },
+  "toggle_button":{
+    "pos_y":17,
+    "lock_position":false,
+    "opacity":0.8,
+    "text":"R",
+    "enabled":true,
+    "size":50,
+    "pos_x":693
   },
   "window":{
+    "hide_title_bar":true,
+    "bg":{
+      "g":0.05,
+      "r":0.05,
+      "b":0.05,
+      "a":0.95
+    },
     "border":{
+      "g":0.3,
       "r":0.3,
       "b":0.3,
-      "a":0.8,
-      "g":0.3
+      "a":0.8
     },
     "use_custom_bg":true,
     "padding":6,
     "rounding":8,
-    "width":300,
-    "height":400,
     "opacity":0.9,
-    "hide_title_bar":true,
-    "bg":{
-      "r":0.05,
-      "b":0.05,
-      "a":0.95,
-      "g":0.05
-    }
-  },
-  "colors":{
-    "header":{
-      "r":0.8,
-      "b":0.3,
-      "a":1,
-      "g":0.8
-    },
-    "online":{
-      "r":0.9,
-      "b":0.9,
-      "a":1,
-      "g":0.9
-    },
-    "offline":{
-      "r":0.5,
-      "b":0.5,
-      "a":0.7,
-      "g":0.5
-    },
-    "self":{
-      "r":0.3,
-      "b":0.3,
-      "a":1,
-      "g":0.9
-    },
-    "tank":{
-      "r":0.6,
-      "b":1,
-      "a":1,
-      "g":0.6
-    },
-    "healer":{
-      "r":0.3,
-      "b":0.3,
-      "a":1,
-      "g":1
-    },
-    "dps":{
-      "r":1,
-      "b":0.3,
-      "a":1,
-      "g":0.7
-    }
+    "width":300,
+    "height":400
   }
 }
