@@ -19,6 +19,456 @@ BotInventory.bot_list_capture_set = {}
 BotInventory.invlist_issued_time = nil
 BotInventory._resources_dir = nil
 BotInventory._capture_count = {}
+BotInventory._web_botlist_coroutine = nil
+BotInventory._last_web_botlist_error = nil
+BotInventory._web_bot_inventory_coroutines = {}
+BotInventory._last_web_inventory_error = {}
+BotInventory._debug = false
+BotInventory._debug_verbose = false
+
+local http
+do
+    local ok, mod = pcall(require, 'socket.http')
+    if ok and mod then
+        http = mod
+        http.TIMEOUT = http.TIMEOUT or 5
+    end
+end
+
+local url_escape
+do
+    local ok, mod = pcall(require, 'socket.url')
+    if ok and mod and mod.escape then
+        url_escape = mod.escape
+    end
+end
+
+local function friendly_web_error(reason)
+    if not reason then return 'unknown error' end
+    if reason == 'http_unavailable' then
+        return 'socket.http module unavailable'
+    elseif reason == 'missing_clean_name' then
+        return 'unable to determine CleanName'
+    elseif reason == 'invalid_clean_name' then
+        return 'CleanName contains unsupported characters'
+    elseif reason == 'no_bots_found' then
+        return 'web response contained no bots'
+    elseif reason == 'unsupported_server' then
+        return 'server does not support web bot list'
+    elseif reason == 'coroutine_error' then
+        return 'coroutine execution failed'
+    elseif reason == 'coroutine_creation_failed' then
+        return 'unable to create coroutine'
+    elseif reason == 'request_failed' then
+        return 'http request failed'
+    elseif reason == 'no_items_found' then
+        return 'web response contained no equipped items'
+    end
+    return tostring(reason)
+end
+
+local function apply_web_botlist(result, clean_name)
+    BotInventory.bot_list_capture_set = {}
+    BotInventory.cached_bot_list = {}
+    for _, entry in ipairs(result) do
+        BotInventory.bot_list_capture_set[entry.Name] = entry
+        table.insert(BotInventory.cached_bot_list, entry.Name)
+    end
+    table.sort(BotInventory.cached_bot_list, function(a, b) return a:lower() < b:lower() end)
+    BotInventory._last_web_botlist_error = nil
+    BotInventory.refreshing_bot_list = false
+    BotInventory.bot_list_start_time = nil
+    BotInventory._web_botlist_coroutine = nil
+    print(string.format('[BotInventory] Loaded %d bots from karanaeq.com for %s', #result, clean_name or 'unknown'))
+end
+
+local function handle_web_botlist_failure(reason)
+    local friendly = friendly_web_error(reason)
+    if reason and reason ~= 'unsupported_server' then
+        print(string.format('[BotInventory] Web bot list fetch failed (%s); in-game fallback temporarily disabled for HTTP testing.', friendly))
+    end
+    BotInventory._last_web_botlist_error = friendly
+    BotInventory._web_botlist_coroutine = nil
+    BotInventory.refreshing_bot_list = false
+    BotInventory.bot_list_start_time = nil
+    BotInventory.bot_list_capture_set = {}
+    BotInventory.cached_bot_list = {}
+
+    -- fallback to in-game /say command
+    BotInventory.refreshing_bot_list = true
+    BotInventory.bot_list_capture_set = {}
+    BotInventory.bot_list_start_time = os.time()
+    mq.cmd("/say ^botlist")
+end
+
+local function get_server_name()
+    if mq and mq.TLO and mq.TLO.EverQuest and mq.TLO.EverQuest.Server then
+        local ok, server = pcall(function() return mq.TLO.EverQuest.Server() end)
+        if ok and server and server ~= '' then
+            return tostring(server)
+        end
+    end
+    return nil
+end
+
+local function get_clean_name()
+    if mq and mq.TLO and mq.TLO.Me then
+        local ok, name = pcall(function()
+            if mq.TLO.Me.CleanName and mq.TLO.Me.CleanName() then return mq.TLO.Me.CleanName() end
+            if mq.TLO.Me.Name and mq.TLO.Me.Name() then return mq.TLO.Me.Name() end
+            return nil
+        end)
+        if ok and name and name ~= '' then
+            return tostring(name)
+        end
+    end
+    return nil
+end
+
+local function sanitize_char_name(name)
+    if not name then return nil end
+    local trimmed = name:match('^%s*(.-)%s*$') or ''
+    if trimmed == '' then return nil end
+    local letters_only = trimmed:gsub("[^A-Za-z]", "")
+    if letters_only == '' then return nil end
+    return letters_only:lower()
+end
+
+local function should_use_web_botlist()
+    local server = get_server_name()
+    if not server then return false end
+    return server:lower() == 'karana'
+end
+
+local function parse_bots_from_html(html)
+    local bots = {}
+    if not html or html == '' then return bots end
+
+    local index = 0
+    for block in html:gmatch("<a%s+class=['\"]CB_Bot_Avatar_Window['\"][^>]*>([%s%S]-)</a>") do
+        local name, detail = block:match("<div%s+class=['\"]CB_Bot_Caption['\"]>%s*<p>([^<]+)</p>%s*<p>([^<]+)</p>")
+        if name and detail then
+            local normalized_name = name:lower()
+            if not normalized_name:find("%-deleted%-%d+") then
+                index = index + 1
+                local level_str, tail = detail:match("^(%d+)%s+(.+)$")
+                local class_name, race_name
+                if tail then
+                    class_name = tail:match("(%S+)$")
+                    if class_name then
+                        local cutoff = #tail - #class_name - 1
+                        if cutoff > 0 then
+                            race_name = tail:sub(1, cutoff)
+                            if race_name then
+                                race_name = race_name:gsub('^%s+', ''):gsub('%s+$', '')
+                            end
+                        end
+                    else
+                        race_name = tail
+                    end
+                end
+
+                if not race_name and tail then
+                    race_name = tail
+                end
+
+                if race_name then
+                    race_name = race_name:gsub('^%s+', ''):gsub('%s+$', '')
+                end
+                if class_name then
+                    class_name = class_name:gsub('^%s+', ''):gsub('%s+$', '')
+                end
+
+                local gender
+                local gender_id = block:match("gender_(%d+)_face_")
+                if gender_id == '0' then
+                    gender = 'Male'
+                elseif gender_id == '1' then
+                    gender = 'Female'
+                end
+
+                bots[#bots + 1] = {
+                    Name = name,
+                    Index = index,
+                    Level = level_str and tonumber(level_str) or nil,
+                    Race = race_name,
+                    Class = class_name,
+                    Gender = gender,
+                }
+            end
+        end
+    end
+
+    return bots
+end
+
+local function try_fetch_botlist_from_web()
+    if not http then
+        return false, 'http_unavailable'
+    end
+    if not should_use_web_botlist() then
+        return false, 'unsupported_server'
+    end
+
+    local clean_name = get_clean_name()
+    if not clean_name then
+        return false, 'missing_clean_name'
+    end
+
+    local sanitized = sanitize_char_name(clean_name)
+    if not sanitized then
+        return false, 'invalid_clean_name'
+    end
+
+    local url = string.format('https://karanaeq.com/Char/index.php?page=bots&char=%s', sanitized)
+    local body, code, _, status = http.request(url)
+    if not body then
+        return false, status or code or 'request_failed'
+    end
+    if tonumber(code) ~= 200 then
+        return false, status or string.format('http_%s', tostring(code))
+    end
+
+    local bots = parse_bots_from_html(body)
+    if #bots == 0 then
+        return false, 'no_bots_found'
+    end
+
+    return true, bots, clean_name
+end
+
+local function decode_html_entities(str)
+    if not str then return '' end
+    local subst = {
+        ['&nbsp;'] = ' ',
+        ['&amp;'] = '&',
+        ['&quot;'] = '"',
+        ['&#39;'] = "'",
+        ['&lt;'] = '<',
+        ['&gt;'] = '>'
+    }
+    str = str:gsub('&nbsp;', ' ')
+    for entity, replacement in pairs(subst) do
+        str = str:gsub(entity, replacement)
+    end
+    return str
+end
+
+local function parse_number_field(value)
+    if not value then return nil end
+    local sanitized = tostring(value):gsub('[,%+]', '')
+    sanitized = sanitized:gsub('%s+', '')
+    if sanitized == '' then return nil end
+    local num = tonumber(sanitized)
+    return num
+end
+
+local function sanitize_for_url(name)
+    if not name then return nil end
+    local trimmed = name:match('^%s*(.-)%s*$') or ''
+    if trimmed == '' then return nil end
+    if url_escape then
+        return url_escape(trimmed)
+    end
+    return trimmed
+end
+
+local function parse_bot_inventory_html(botName, html)
+    if not html or html == '' then return {} end
+
+    local collapsed = html:gsub('%s+', ' ')
+    local items = {}
+
+    local pattern = "<div%s+class=['\"]WindowComplex[^>]-id=['\"]slot(%d+)[\"'][^>]*>"
+    local pos = 1
+
+    while true do
+        local startIdx, endIdx, slotId = collapsed:find(pattern, pos)
+        if not startIdx then break end
+
+        local nextStart = collapsed:find("<div%s+class=['\"]WindowComplex", endIdx + 1)
+        local blockEnd = nextStart and (nextStart - 1) or #collapsed
+        local fullBlock = collapsed:sub(startIdx, blockEnd)
+        pos = nextStart or (#collapsed + 1)
+
+        local header = fullBlock:match("<div%s+class=['\"]WindowTitleBar['\"]>(.-)</div>")
+        local link = header and header:match("<a%s+href=['\"]([^'\"]+)['\"]")
+        local name = header and header:match("<a [^>]*>([^<]+)</a>")
+        local itemID = link and link:match('id=(%d+)')
+        local iconID = fullBlock:match("Slot%s+Item_(%d+)")
+        local stats_html = fullBlock:match("<div%s+class=['\"]Stats['\"][^>]*>(.-)</div>%s*</div>")
+
+        if stats_html then
+            local stats_text = stats_html:gsub('<br ?/?>', '\n')
+            stats_text = stats_text:gsub('<[^>]+>', '')
+            stats_text = decode_html_entities(stats_text)
+            stats_text = stats_text:gsub('\r', ''):gsub('\f', ''):gsub('\t', ' ')
+            stats_text = stats_text:gsub('%s+\n', '\n'):gsub('\n%s+', '\n')
+            stats_text = stats_text:gsub(' +', ' ')
+            stats_text = stats_text:gsub('^%s+', ''):gsub('%s+$', '')
+
+            local slotname = stats_text:match('Slot:%s*([^\n]+)')
+            if slotname then
+                slotname = slotname:gsub('%s+$', '')
+            end
+
+            local ac = parse_number_field(stats_text:match('AC:%s*([%d,%+]+)'))
+            local hp = parse_number_field(stats_text:match('HP:%s*[%+]?([%d,]+)'))
+            local mana = parse_number_field(stats_text:match('MANA:%s*[%+]?([%d,]+)'))
+            local damage = parse_number_field(stats_text:match('DMG:%s*([%d,]+)'))
+            local delay = parse_number_field(stats_text:match('Atk Delay:%s*([%d,]+)') or stats_text:match('Delay:%s*([%d,]+)'))
+            local chargesText = stats_text:match('Charges:%s*([%w]+)')
+            local charges
+            if chargesText then
+                local numericCharges = parse_number_field(chargesText)
+                if numericCharges then
+                    charges = numericCharges
+                elseif chargesText:lower():find('infinite') then
+                    charges = -1
+                end
+            end
+
+            local item = {
+                name = name or string.format('Slot %s', slotId),
+                slotid = tonumber(slotId),
+                slotname = slotname or string.format('Slot %s', slotId),
+                itemlink = link,
+                rawline = stats_text,
+                itemID = itemID and tonumber(itemID) or nil,
+                icon = iconID and tonumber(iconID) or 0,
+                iconID = iconID and tonumber(iconID) or 0,
+                ac = ac,
+                hp = hp,
+                mana = mana,
+                damage = damage,
+                delay = delay,
+                qty = 1,
+                nodrop = 1,
+                charges = charges,
+            }
+
+            if BotInventory._debug and BotInventory._debug_verbose then
+                print(string.format('[BotInventory DEBUG] Parsed item slot %s: ac=%s hp=%s mana=%s dmg=%s delay=%s',
+                    tostring(slotId), tostring(ac), tostring(hp), tostring(mana), tostring(damage), tostring(delay)))
+            end
+
+            table.insert(items, item)
+        end
+    end
+
+    table.sort(items, function(a, b)
+        return (a.slotid or 0) < (b.slotid or 0)
+    end)
+
+    if BotInventory._debug and BotInventory._debug_verbose then
+        print(string.format('[BotInventory DEBUG] Parsed %d equipped item(s) for %s', #items, tostring(botName)))
+    elseif BotInventory._debug and #items == 0 then
+        print(string.format('[BotInventory DEBUG] parse_bot_inventory_html: items=0 for %s', tostring(botName)))
+    end
+
+    return items
+end
+
+local function build_inventory_from_response(botName, body, code, status)
+    if not body then
+        return false, status or code or 'request_failed'
+    end
+    if tonumber(code) ~= 200 then
+        return false, status or string.format('http_%s', tostring(code))
+    end
+
+    local items = parse_bot_inventory_html(botName, body)
+    if #items == 0 then
+        return false, 'no_items_found'
+    end
+
+    local inventory = {
+        name = botName,
+        equipped = items,
+        bags = {},
+        bank = {},
+    }
+
+    return true, inventory
+end
+
+local function apply_web_inventory(botName, inventory)
+    local previous = BotInventory.bot_inventories[botName]
+    BotInventory.bot_inventories[botName] = inventory
+    BotInventory._capture_count[botName] = #(inventory.equipped or {})
+    BotInventory._last_web_inventory_error[botName] = nil
+
+    if previous and BotInventory.compareInventoryData then
+        local mismatches = BotInventory.compareInventoryData(botName, previous, inventory)
+        if mismatches and #mismatches > 0 then
+            print(string.format('[BotInventory] Detected %d mismatched item(s) for %s, queueing for scan', #mismatches, botName))
+            if BotInventory.onMismatchDetected then
+                for _, mismatch in ipairs(mismatches) do
+                    print(string.format('[BotInventory] Queueing %s (slot %s) for scan: %s', mismatch.item.name or 'unknown', tostring(mismatch.slotId), mismatch.reason))
+                    BotInventory.onMismatchDetected(mismatch.item, botName, mismatch.reason)
+                end
+            end
+        end
+    end
+
+    local meta = BotInventory.bot_list_capture_set and BotInventory.bot_list_capture_set[botName] or nil
+    if db and db.save_bot_inventory then
+        local ok, err = db.save_bot_inventory(botName, inventory, meta)
+        if not ok then
+            print(string.format('[BotInventory][DB] Failed to save inventory for %s: %s', botName, tostring(err)))
+        end
+    end
+end
+
+local function start_inventory_fallback(botName)
+    BotInventory._capture_count[botName] = 0
+    BotInventory.current_bot_request = botName
+    BotInventory.bot_request_start_time = os.time()
+    BotInventory.spawn_issued_time = nil
+    BotInventory.target_issued_time = os.clock()
+    BotInventory.invlist_issued_time = nil
+    BotInventory.bot_request_phase = 1
+    targetBotByName(botName)
+end
+
+local function handle_web_inventory_failure(botName, reason)
+    local friendly = friendly_web_error(reason)
+    BotInventory._last_web_inventory_error[botName] = friendly
+    print(string.format('[BotInventory] Web inventory fetch failed for %s (%s)', tostring(botName), friendly))
+    BotInventory._capture_count[botName] = 0
+    if BotInventory.current_bot_request == botName then
+        BotInventory.current_bot_request = nil
+        BotInventory.bot_request_start_time = nil
+    end
+    if BotInventory.onBotFailure then
+        BotInventory.onBotFailure(botName, friendly)
+    end
+
+    -- fallback to in-game inventory request
+    start_inventory_fallback(botName)
+end
+
+local function try_fetch_bot_inventory_from_web(botName)
+    if not http then
+        return false, 'http_unavailable'
+    end
+    if not should_use_web_botlist() then
+        return false, 'unsupported_server'
+    end
+
+    local encoded = sanitize_for_url(botName)
+    if not encoded then
+        return false, 'invalid_bot_name'
+    end
+
+    local url = string.format('https://karanaeq.com/Char/index.php?page=bot&bot=%s', encoded)
+    local body, code, _, status = http.request(url)
+    if BotInventory._debug then
+        print(string.format('[BotInventory DEBUG] Fetching inventory for %s (url=%s, code=%s, status=%s)', botName, url, tostring(code), tostring(status)))
+    end
+
+    return build_inventory_from_response(botName, body, code, status)
+end
 
 local function normalizePathSeparators(path)
     return path and path:gsub('\\\\', '/') or nil
@@ -537,10 +987,29 @@ function BotInventory.refreshBotList()
 
     print("[BotInventory] Refreshing bot list...")
     BotInventory.refreshing_bot_list = true
-    BotInventory.bot_list_capture_set = {}
-    BotInventory.bot_list_start_time = os.time()
-
-    mq.cmd("/say ^botlist")
+    if should_use_web_botlist() and http then
+        BotInventory.bot_list_start_time = os.time()
+        BotInventory._web_botlist_coroutine = coroutine.create(function()
+            coroutine.yield()
+            local success, result, clean_name = try_fetch_botlist_from_web()
+            if success then
+                apply_web_botlist(result, clean_name)
+            else
+                handle_web_botlist_failure(result)
+            end
+        end)
+        if BotInventory._web_botlist_coroutine then
+            local ok, err = coroutine.resume(BotInventory._web_botlist_coroutine)
+            if not ok then
+                print(string.format('[BotInventory] Web bot list coroutine error: %s', tostring(err)))
+                handle_web_botlist_failure('coroutine_error')
+            end
+        end
+    else
+        BotInventory.bot_list_capture_set = {}
+        BotInventory.bot_list_start_time = os.time()
+        mq.cmd("/say ^botlist")
+    end
 end
 
 function BotInventory.processBotListResponse()
@@ -569,7 +1038,51 @@ function BotInventory.requestBotInventory(botName)
         print(string.format("[BotInventory] Skipping bot %s due to failure history", botName))
         return false
     end
-    
+
+    if should_use_web_botlist() and http then
+        if BotInventory._web_bot_inventory_coroutines[botName] then
+            return true
+        end
+
+        BotInventory.current_bot_request = botName
+        BotInventory.bot_request_phase = 0
+        BotInventory.bot_request_start_time = os.time()
+        BotInventory._capture_count[botName] = 0
+
+        local co = coroutine.create(function()
+            coroutine.yield()
+            local success, payload = try_fetch_bot_inventory_from_web(botName)
+            if success then
+                apply_web_inventory(botName, payload)
+            else
+                if BotInventory._debug then
+                    print(string.format('[BotInventory DEBUG] Web inventory raw response for %s: %s', botName, tostring(payload or 'nil')))
+                end
+                handle_web_inventory_failure(botName, payload)
+            end
+            BotInventory._web_bot_inventory_coroutines[botName] = nil
+            BotInventory.current_bot_request = nil
+            BotInventory.bot_request_phase = 0
+            BotInventory.bot_request_start_time = nil
+        end)
+
+        if not co then
+            handle_web_inventory_failure(botName, 'coroutine_creation_failed')
+            return false
+        end
+
+        BotInventory._web_bot_inventory_coroutines[botName] = co
+        local ok, err = coroutine.resume(co)
+        if not ok then
+            print(string.format('[BotInventory] Web inventory coroutine error for %s: %s', tostring(botName), tostring(err)))
+            BotInventory._web_bot_inventory_coroutines[botName] = nil
+            BotInventory.current_bot_request = nil
+            handle_web_inventory_failure(botName, 'coroutine_error')
+            return false
+        end
+        return true
+    end
+
     if BotInventory.current_bot_request == botName and BotInventory.bot_request_phase ~= 0 then 
         return false 
     end
@@ -771,6 +1284,36 @@ function BotInventory.getBotEquippedItem(botName, slotID)
 end
 
 function BotInventory.process()
+    if BotInventory._web_botlist_coroutine and coroutine.status(BotInventory._web_botlist_coroutine) ~= 'dead' then
+        local ok, err = coroutine.resume(BotInventory._web_botlist_coroutine)
+        if not ok then
+            print(string.format('[BotInventory] Web bot list coroutine error: %s', tostring(err)))
+            handle_web_botlist_failure('coroutine_error')
+        end
+    end
+
+    if BotInventory._web_bot_inventory_coroutines then
+        local toRemove = {}
+        for botName, co in pairs(BotInventory._web_bot_inventory_coroutines) do
+            if coroutine.status(co) == 'dead' then
+                table.insert(toRemove, botName)
+            else
+                local ok, err = coroutine.resume(co)
+                if not ok then
+                    print(string.format('[BotInventory] Web inventory coroutine error for %s: %s', tostring(botName), tostring(err)))
+                    handle_web_inventory_failure(botName, 'coroutine_error')
+                    table.insert(toRemove, botName)
+                end
+            end
+        end
+        for _, botName in ipairs(toRemove) do
+            BotInventory._web_bot_inventory_coroutines[botName] = nil
+            if BotInventory.current_bot_request == botName then
+                BotInventory.current_bot_request = nil
+            end
+        end
+    end
+
     BotInventory.processBotListResponse()
     BotInventory.processBotInventoryResponse()
 end

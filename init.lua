@@ -3488,10 +3488,19 @@ local function cleanup()
     printf('[EmuBot] Shutting down...')
     if raid_hud and raid_hud.cleanup then raid_hud.cleanup() end
     if bot_controls and bot_controls.cleanup then bot_controls.cleanup() end
+    if db and db.close then
+        local ok, err = db.close()
+        if not ok then
+            printf('[EmuBot][DB] Warning: failed to close database cleanly (%s)', tostring(err))
+        end
+    end
 end
 
 -- Set up cleanup on script termination
 mq.bind('/lua stop EmuBot', cleanup)
+if mq and mq.atunload then
+    mq.atunload(cleanup)
+end
 
 local status, result = pcall(main)
 if not status then

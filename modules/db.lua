@@ -43,6 +43,7 @@ local M = {}
 M._db = nil
 M._db_path = nil
 M._debug = false
+M._closed_explicitly = false
 
 -- Resolve current character (owner) name for scoping
 local function get_owner_name()
@@ -661,6 +662,45 @@ function M.get_groups_with_members()
     end
     
     return groups
+end
+
+function M.close()
+    if not M._db then
+        return true
+    end
+
+    local db = M._db
+    local path = M._db_path
+
+    local ok, res, err_msg = pcall(function()
+        return db:close()
+    end)
+
+    if not ok then
+        printf('[EmuBot][DB] Error closing database: %s', tostring(res))
+        return false, tostring(res)
+    end
+
+    if res == true then
+        M._db = nil
+        M._db_path = nil
+        M._closed_explicitly = true
+        if M._debug then
+            printf('[EmuBot][DB] Closed database %s', tostring(path))
+        end
+        return true
+    end
+
+    local reason = err_msg or res
+    if reason then
+        printf('[EmuBot][DB] Database close reported: %s', tostring(reason))
+        return false, tostring(reason)
+    end
+
+    M._db = nil
+    M._db_path = nil
+    M._closed_explicitly = true
+    return true
 end
 
 return M
