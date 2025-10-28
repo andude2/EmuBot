@@ -1,5 +1,6 @@
 local mq = require('mq')
 local ImGui = require('ImGui')
+local actors = require('actors')
 
 local bot_inventory = require('EmuBot.modules.bot_inventory')
 local bot_management = require('EmuBot.modules.bot_management')
@@ -7,6 +8,7 @@ local bot_groups = require('EmuBot.modules.bot_groups')
 local raid_manager = require('EmuBot.modules.raid_manager')
 local upgrade = require('EmuBot.modules.upgrade')
 local db = require('EmuBot.modules.db')
+local bot_communications = require('EmuBot.modules.bot_communications')
 local commandsui = require('EmuBot.ui.commandsui')
 local bot_controls = require('EmuBot.ui.bot_controls')
 local raid_hud = require('EmuBot.ui.raid_hud')
@@ -645,9 +647,11 @@ function botUI._processScanAllBots()
     local shouldCamp = not botUI.disableCampDuringScanAll
     
     if isSpawned then
-        -- Bot is already spawned, just get inventory
-        printf('[EmuBot] Bot %s already spawned, requesting inventory...', currentBot)
-        bot_inventory.requestBotInventory(currentBot)
+        -- Bot is already spawned, target it and get inventory
+        printf('[EmuBot] Bot %s already spawned, targeting and requesting inventory...', currentBot)
+        botUI._targetBotByName(currentBot)
+        mq.delay(500) -- Brief delay after targeting
+        mq.cmdf('/say ^invlist')
         if shouldCamp then
             printf('[EmuBot] Will camp %s after inventory capture', currentBot)
         else
@@ -663,8 +667,10 @@ function botUI._processScanAllBots()
             mq.delay(3000) -- Wait for spawn to appear
             local spawnCheck = mq.TLO.Spawn(string.format('= %s', currentBot))
             if spawnCheck and spawnCheck.ID and spawnCheck.ID() and spawnCheck.ID() > 0 then
-                printf('[EmuBot] Bot %s spawned, requesting inventory...', currentBot)
-                bot_inventory.requestBotInventory(currentBot)
+                printf('[EmuBot] Bot %s spawned, targeting and requesting inventory...', currentBot)
+                botUI._targetBotByName(currentBot)
+                mq.delay(500) -- Brief delay after targeting
+                mq.cmdf('/say ^invlist')
                 if shouldCamp then
                     printf('[EmuBot] Will camp %s after inventory capture', currentBot)
                 else
@@ -681,7 +687,7 @@ function botUI._processScanAllBots()
     return true
 end
 
-local function _targetBotByName(botName)
+function botUI._targetBotByName(botName)
     if not botName or botName == '' then return false end
     local spawn = mq.TLO.Spawn(string.format('= %s', botName))
     if spawn and spawn.ID and spawn.ID() and spawn.ID() > 0 then
@@ -736,7 +742,7 @@ for _, item in ipairs(itemsToScan) do
     -- Camp bot if requested, otherwise proceed immediately
     if shouldCamp then
         printf('[EmuBot] Camping bot %s...', botName)
-        local targeted = _targetBotByName(botName)
+        local targeted = botUI._targetBotByName(botName)
         if targeted then
             mq.cmd('/say ^botcamp')
         else
@@ -2525,6 +2531,114 @@ function drawBotGroupsTab()
     end
 end
 
+local function drawPeersTab()
+    if not bot_communications then
+        ImGui.TextColored(0.9, 0.3, 0.3, 1.0, "Communications system not available")
+        return
+    end
+
+    -- Header with status and controls
+    ImGui.Text("Peer Communications")
+    ImGui.SameLine()
+    if ImGui.SmallButton("Broadcast Data") then
+        bot_communications.broadcastLocalData()
+    end
+    ImGui.SameLine()
+    if ImGui.SmallButton("Refresh Peers") then
+        bot_communications.cleanupOldPeers()
+    end
+
+    ImGui.Separator()
+
+    -- Get active peers
+    local activePeers = bot_communications.getActivePeers()
+
+    ImGui.Text(string.format("Connected Peers: %d", #activePeers))
+
+    if #activePeers == 0 then
+        ImGui.TextColored(0.7, 0.7, 0.7, 1.0, "No active peers detected.")
+        ImGui.Text("Peers will appear here when they connect and share bot data.")
+        return
+    end
+
+    -- Display peer information
+    if ImGui.BeginTable("PeersTable", 4, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+        ImGui.TableSetupColumn("Peer Name", ImGuiTableColumnFlags.WidthStretch)
+        ImGui.TableSetupColumn("Bots", ImGuiTableColumnFlags.WidthFixed, 60)
+        ImGui.TableSetupColumn("Last Seen", ImGuiTableColumnFlags.WidthFixed, 100)
+        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 100)
+        ImGui.TableHeadersRow()
+
+        for _, peer in ipairs(activePeers) do
+            ImGui.TableNextRow()
+
+            -- Peer Name
+            ImGui.TableNextColumn()
+            ImGui.Text(peer.name)
+
+            -- Bot Count
+            ImGui.TableNextColumn()
+            local botCount = peer.data and #peer.data or 0
+            ImGui.Text(tostring(botCount))
+
+            -- Last Seen
+            ImGui.TableNextColumn()
+            local timeDiff = os.time() - peer.last_seen
+            local timeStr
+            if timeDiff < 60 then
+                timeStr = string.format("%ds ago", timeDiff)
+            elseif timeDiff < 3600 then
+                timeStr = string.format("%dm ago", math.floor(timeDiff / 60))
+            else
+                timeStr = string.format("%dh ago", math.floor(timeDiff / 3600))
+            end
+            ImGui.Text(timeStr)
+
+            -- Actions
+            ImGui.TableNextColumn()
+            ImGui.PushID("peer_actions_" .. peer.name)
+            if ImGui.SmallButton("Request Data") then
+                bot_communications.requestPeerData()
+            end
+            ImGui.PopID()
+        end
+
+        ImGui.EndTable()
+    end
+
+    -- Show detailed bot information for each peer
+    for _, peer in ipairs(activePeers) do
+        if peer.data and #peer.data > 0 then
+            ImGui.Spacing()
+            ImGui.Separator()
+            ImGui.Text(string.format("Bots from %s:", peer.name))
+
+            if ImGui.BeginTable("PeerBots_" .. peer.name, 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg) then
+                ImGui.TableSetupColumn("Bot Name", ImGuiTableColumnFlags.WidthStretch)
+                ImGui.TableSetupColumn("Class", ImGuiTableColumnFlags.WidthFixed, 80)
+                ImGui.TableSetupColumn("Items", ImGuiTableColumnFlags.WidthFixed, 60)
+                ImGui.TableHeadersRow()
+
+                for _, bot in ipairs(peer.data) do
+                    ImGui.TableNextRow()
+
+                    ImGui.TableNextColumn()
+                    ImGui.Text(bot.name or "Unknown")
+
+                    ImGui.TableNextColumn()
+                    ImGui.Text(bot.class or "Unknown")
+
+                    ImGui.TableNextColumn()
+                    local itemCount = bot.equipped and #bot.equipped or 0
+                    ImGui.Text(tostring(itemCount))
+                end
+
+                ImGui.EndTable()
+            end
+        end
+    end
+end
+
 function is_bot_spawned(name)
     local s = mq.TLO.Spawn(string.format('= %s', name))
     return s and s.ID and s.ID() and s.ID() > 0
@@ -2886,6 +3000,10 @@ if ImGui.BeginTabBar('BotEquippedViewTabs', ImGuiTabBarFlags.Reorderable) then
                 ImGui.EndTabItem()
             end
 
+            if ImGui.BeginTabItem('Peers') then
+                drawPeersTab()
+                ImGui.EndTabItem()
+            end
 
             if ImGui.BeginTabItem('Settings/Utils') then
                 local res1, res2 = ImGui.SliderFloat('Fetch Interval (sec)##BotFetchDelay', botUI.botFetchDelay, 0.1, 5.0, '%.1f')
@@ -3454,6 +3572,12 @@ local function main()
     if upgrade and upgrade.init then upgrade.init() end
     if raid_hud and raid_hud.init then raid_hud.init() end
 
+    -- Initialize communications system
+    if not bot_communications.init() then
+        printf('[EmuBot] Failed to initialize communications system')
+        return
+    end
+
     -- Start the Bot HotBar floating UI
     if commandsui and commandsui.start then commandsui.start() end
 
@@ -3465,6 +3589,8 @@ local function main()
         mq.doevents()
         bot_inventory.process()
         bot_groups.process_invitations()
+        bot_communications.updateLocalBotData(bot_inventory)
+        bot_communications.update()
         processDeferredTasks()
         
         -- Process delayed refresh after bot creation
@@ -3486,6 +3612,7 @@ end
 -- Cleanup function for when script terminates
 local function cleanup()
     printf('[EmuBot] Shutting down...')
+    if bot_communications and bot_communications.shutdown then bot_communications.shutdown() end
     if raid_hud and raid_hud.cleanup then raid_hud.cleanup() end
     if bot_controls and bot_controls.cleanup then bot_controls.cleanup() end
 end
