@@ -4,6 +4,7 @@
 local mq = require('mq')
 local bot_inventory = require('EmuBot.modules.bot_inventory')
 local race_class_utils = require('EmuBot.modules.race_class_utils')
+local applyTableSort = require('EmuBot.modules.ui_table_utils').applyTableSort
 
 local M = {}
 
@@ -350,11 +351,17 @@ function M.draw()
 
     -- Right pane: contained table
     if ImGui.BeginChild('##BotMgmtContainer', 400, 410, ImGuiChildFlags.Border) then
-        if ImGui.BeginTable('BotManagementTable', 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingFixedFit) then
+        if ImGui.BeginTable('BotManagementTable', 3,
+                ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.SizingFixedFit + ImGuiTableFlags.Sortable) then
             ImGui.TableSetupColumn('Bot', ImGuiTableColumnFlags.WidthStretch)
             ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 110)
             ImGui.TableSetupColumn('Actions', ImGuiTableColumnFlags.WidthStretch)
             ImGui.TableHeadersRow()
+
+            applyTableSort(filteredBots, ImGui.TableGetSortSpecs(), {
+                [1] = function(row) return row or '' end,
+                [2] = function(row) return canonicalize_class((bot_inventory.bot_list_capture_set[row] and bot_inventory.bot_list_capture_set[row].Class) or '') or '' end,
+            })
 
             for _, name in ipairs(filteredBots) do
                 ImGui.TableNextRow()

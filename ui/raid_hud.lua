@@ -13,7 +13,7 @@ local M = {}
 
 -- State and configuration
 local state = {
-    show = true,
+    show = false,
     showSettings = false,
     showToggleButton = true,
 }

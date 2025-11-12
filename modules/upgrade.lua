@@ -3,6 +3,7 @@
 
 local mq = require('mq')
 local bot_inventory = require('EmuBot.modules.bot_inventory')
+local applyTableSort = require('EmuBot.modules.ui_table_utils').applyTableSort
 
 local U = {}
 
@@ -382,7 +383,46 @@ function U.draw_tab()
 
     -- Determine number of columns based on whether the item is a weapon (removed Upgrade column)
     local numCols = isWeapon and 9 or 7
-    if ImGui.BeginTable('EmuBotUpgradeTable', numCols, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+    local upgAC, upgHP, upgMana = get_cursor_stats()
+    local upgDamage, upgDelay = get_cursor_weapon_stats()
+
+    local displayRows = {}
+    for _, row in ipairs(U._candidates or {}) do
+        local curItem = nil
+        local cAC, cHP, cMana = 0, 0, 0
+        local cDamage, cDelay = 0, 0
+        if bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
+            curItem = bot_inventory.getBotEquippedItem(row.bot, row.slotid)
+            cAC = tonumber(curItem and curItem.ac or 0) or 0
+            cHP = tonumber(curItem and curItem.hp or 0) or 0
+            cMana = tonumber(curItem and curItem.mana or 0) or 0
+
+            if isWeapon and curItem and curItem.name then
+                local currentItemTLO = mq.TLO.FindItem(string.format('= %s', curItem.name))
+                if currentItemTLO and currentItemTLO() then
+                    local isCurrentWeapon = is_weapon_type(currentItemTLO.Type())
+                    if isCurrentWeapon then
+                        cDamage = tonumber(currentItemTLO.Damage() or 0) or 0
+                        cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
+                    end
+                end
+            end
+        end
+
+        table.insert(displayRows, {
+            ref = row,
+            slotname = row.slotname or ('Slot ' .. tostring(row.slotid or '?')),
+            current = curItem,
+            deltaAC = (upgAC or 0) - cAC,
+            deltaHP = (upgHP or 0) - cHP,
+            deltaMana = (upgMana or 0) - cMana,
+            deltaDamage = (upgDamage or 0) - cDamage,
+            deltaDelay = (upgDelay or 0) - cDelay,
+        })
+    end
+
+    if ImGui.BeginTable('EmuBotUpgradeTable', numCols,
+            ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
         ImGui.TableSetupColumn('Bot', ImGuiTableColumnFlags.WidthFixed, 120)
         ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
         ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
@@ -399,7 +439,32 @@ function U.draw_tab()
         ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 120)
         ImGui.TableHeadersRow()
 
-        for i, row in ipairs(U._candidates) do
+        local sortAccessors
+        if isWeapon then
+            sortAccessors = {
+                [1] = function(entry) return entry.ref.bot or '' end,
+                [2] = function(entry) return entry.ref.class or '' end,
+                [3] = function(entry) return entry.slotname or '' end,
+                [4] = function(entry) return entry.deltaDamage or 0 end,
+                [5] = function(entry) return entry.deltaDelay or 0 end,
+                [6] = function(entry) return entry.deltaAC or 0 end,
+                [7] = function(entry) return entry.deltaHP or 0 end,
+                [8] = function(entry) return entry.deltaMana or 0 end,
+            }
+        else
+            sortAccessors = {
+                [1] = function(entry) return entry.ref.bot or '' end,
+                [2] = function(entry) return entry.ref.class or '' end,
+                [3] = function(entry) return entry.slotname or '' end,
+                [4] = function(entry) return entry.deltaAC or 0 end,
+                [5] = function(entry) return entry.deltaHP or 0 end,
+                [6] = function(entry) return entry.deltaMana or 0 end,
+            }
+        end
+        applyTableSort(displayRows, ImGui.TableGetSortSpecs(), sortAccessors)
+
+        for i, entry in ipairs(displayRows) do
+            local row = entry.ref
             ImGui.TableNextRow()
             ImGui.PushID('upg_' .. tostring(i))
 
@@ -426,75 +491,51 @@ function U.draw_tab()
             ImGui.Text(row.class or 'UNK')
 
             ImGui.TableNextColumn()
-            ImGui.Text(row.slotname or ('Slot ' .. tostring(row.slotid or '?')))
-
-            -- Compute deltas for quick glance in the main table
-            local upgAC, upgHP, upgMana = get_cursor_stats()
-            local upgDamage, upgDelay = get_cursor_weapon_stats()
-            local cAC, cHP, cMana = 0, 0, 0
-            local cDamage, cDelay = 0, 0
-            
-            if bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
-                local curItem = bot_inventory.getBotEquippedItem(row.bot, row.slotid)
-                cAC = tonumber(curItem and curItem.ac or 0) or 0
-                cHP = tonumber(curItem and curItem.hp or 0) or 0
-                cMana = tonumber(curItem and curItem.mana or 0) or 0
-                
-                -- Get current equipped item's weapon stats if this is a weapon (without DisplayItem dependency)
-                if isWeapon and curItem and curItem.name then
-                    local currentItemTLO = mq.TLO.FindItem(string.format('= %s', curItem.name))
-                    if currentItemTLO and currentItemTLO() then
-                        local isCurrentWeapon = is_weapon_type(currentItemTLO.Type())
-                        if isCurrentWeapon then
-                            cDamage = tonumber(currentItemTLO.Damage() or 0) or 0
-                            cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
-                        end
-                    end
-                end
-            end
-            
-            local dAC = (upgAC or 0) - cAC
-            local dHP = (upgHP or 0) - cHP
-            local dMana = (upgMana or 0) - cMana
-            local dDamage = (upgDamage or 0) - cDamage
-            local dDelay = (upgDelay or 0) - cDelay
+            ImGui.Text(entry.slotname)
 
             -- Weapon deltas (colored) - only if weapon
-            if isWeapon then
-                -- For weapon Damage: higher is better (green on positive)
-                local function color_damage(delta)
-                    if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
-                    elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
-                    else ImGui.Text('0') end
-                end
-                -- For weapon Delay: LOWER is better, so invert colors
-                local function color_delay(delta)
-                    if delta < 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
-                    elseif delta > 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, '+' .. tostring(delta))
-                    else ImGui.Text('0') end
-                end
+        if isWeapon then
+            -- For weapon Damage: higher is better (green on positive)
+            local function color_damage(delta)
+                delta = delta or 0
+                if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
+                elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
+                else ImGui.Text('0') end
+            end
+            -- For weapon Delay: LOWER is better, so invert colors
+            local function color_delay(delta)
+                delta = delta or 0
+                if delta < 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
+                elseif delta > 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, '+' .. tostring(delta))
+                else ImGui.Text('0') end
+            end
 
-                ImGui.TableNextColumn(); color_damage(dDamage)
-                ImGui.TableNextColumn(); color_delay(dDelay)
+                ImGui.TableNextColumn(); color_damage(entry.deltaDamage)
+                ImGui.TableNextColumn(); color_delay(entry.deltaDelay)
             end
 
             -- Other deltas (colored)
             local function colortext(delta)
+                delta = delta or 0
                 if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
                 elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
                 else ImGui.Text('0') end
             end
 
-            ImGui.TableNextColumn(); colortext(dAC)
-            ImGui.TableNextColumn(); colortext(dHP)
-            ImGui.TableNextColumn(); colortext(dMana)
+            ImGui.TableNextColumn(); colortext(entry.deltaAC)
+            ImGui.TableNextColumn(); colortext(entry.deltaHP)
+            ImGui.TableNextColumn(); colortext(entry.deltaMana)
 
             ImGui.TableNextColumn()
             if ImGui.SmallButton('Swap') then
                 local ok = swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
                 if ok then
-                    -- Remove this candidate (assumes single item usage)
-                    table.remove(U._candidates, i)
+                    for idx, candidate in ipairs(U._candidates) do
+                        if candidate == row then
+                            table.remove(U._candidates, idx)
+                            break
+                        end
+                    end
                 end
             end
             if ImGui.IsItemHovered() then
@@ -608,7 +649,62 @@ function U.draw_compare_window()
 
     -- Determine number of columns based on whether the item is a weapon (removed Upgrade column)
     local numCols = isWeapon and 10 or 8
-    if ImGui.BeginTable('EmuBotUpgradeCompare', numCols, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+    local compareRows = {}
+    for _, row in ipairs(U._candidates or {}) do
+        local curItem = nil
+        if bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
+            curItem = bot_inventory.getBotEquippedItem(row.bot, row.slotid)
+        end
+        local cAC = tonumber(curItem and curItem.ac or 0) or 0
+        local cHP = tonumber(curItem and curItem.hp or 0) or 0
+        local cMana = tonumber(curItem and curItem.mana or 0) or 0
+        local cDamage = tonumber(curItem and curItem.damage or 0) or 0
+        local cDelay = tonumber(curItem and curItem.delay or 0) or 0
+        if isWeapon and curItem and curItem.name and (cDamage == 0 and cDelay == 0) then
+            local currentItemTLO = mq.TLO.FindItem(string.format('= %s', curItem.name or ''))
+            if currentItemTLO and currentItemTLO() then
+                cDamage = tonumber(currentItemTLO.Damage() or 0) or 0
+                cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
+            end
+        end
+        table.insert(compareRows, {
+            ref = row,
+            stats = {
+                item = curItem,
+                ac = cAC,
+                hp = cHP,
+                mana = cMana,
+                damage = cDamage,
+                delay = cDelay,
+            },
+        })
+    end
+
+    if ImGui.BeginTable('EmuBotUpgradeCompare', numCols,
+            ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
+        applyTableSort(compareRows, ImGui.TableGetSortSpecs(), {
+            [1] = function(entry) return entry.ref.bot or '' end,
+            [2] = function(entry) return entry.ref.class or '' end,
+            [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
+            [4] = function(entry)
+                return entry.stats.item and entry.stats.item.name or ''
+            end,
+            [5] = isWeapon and function(entry)
+                return (upgDamage or 0) - (entry.stats.damage or 0)
+            end or nil,
+            [6] = isWeapon and function(entry)
+                return (upgDelay or 0) - (entry.stats.delay or 0)
+            end or nil,
+            [isWeapon and 7 or 5] = function(entry)
+                return (upgAC or 0) - (entry.stats.ac or 0)
+            end,
+            [isWeapon and 8 or 6] = function(entry)
+                return (upgHP or 0) - (entry.stats.hp or 0)
+            end,
+            [isWeapon and 9 or 7] = function(entry)
+                return (upgMana or 0) - (entry.stats.mana or 0)
+            end,
+        })
         ImGui.TableSetupColumn('Bot', ImGuiTableColumnFlags.WidthFixed, 120)
         ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
         ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
@@ -626,36 +722,18 @@ function U.draw_compare_window()
         ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 90)
         ImGui.TableHeadersRow()
 
-        for i, row in ipairs(U._candidates) do
+        for i, entry in ipairs(compareRows) do
+            local row = entry.ref
+            local stats = entry.stats
             ImGui.TableNextRow()
             ImGui.PushID('cmp_' .. tostring(i))
 
-            -- Resolve current equipped item for this bot/slot
-            local curItem = nil
-            if bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
-                curItem = bot_inventory.getBotEquippedItem(row.bot, row.slotid)
-            end
-            local cAC = tonumber(curItem and curItem.ac or 0) or 0
-            local cHP = tonumber(curItem and curItem.hp or 0) or 0
-            local cMana = tonumber(curItem and curItem.mana or 0) or 0
-            
-            -- Calculate weapon stats for current equipped item: prefer DB values, fallback to MQ only if missing
-            local cDamage = tonumber(curItem and curItem.damage or 0) or 0
-            local cDelay = tonumber(curItem and curItem.delay or 0) or 0
-            if isWeapon and curItem and curItem.name and (cDamage == 0 and cDelay == 0) then
-                -- As a fallback, attempt to read from MQ for the equipped item by exact name
-                local currentItemTLO = mq.TLO.FindItem(string.format('= %s', curItem.name or ''))
-                if currentItemTLO and currentItemTLO() then
-                    cDamage = tonumber(currentItemTLO.Damage() or 0) or 0
-                    cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
-                end
-            end
-
-            local dAC = (upgAC or 0) - cAC
-            local dHP = (upgHP or 0) - cHP
-            local dMana = (upgMana or 0) - cMana
-            local dDamage = (upgDamage or 0) - cDamage
-            local dDelay = (upgDelay or 0) - cDelay
+            local curItem = stats.item
+            local dAC = (upgAC or 0) - (stats.ac or 0)
+            local dHP = (upgHP or 0) - (stats.hp or 0)
+            local dMana = (upgMana or 0) - (stats.mana or 0)
+            local dDamage = (upgDamage or 0) - (stats.damage or 0)
+            local dDelay = (upgDelay or 0) - (stats.delay or 0)
 
             ImGui.TableNextColumn()
             if ImGui.Selectable((row.bot or 'Unknown') .. '##target_' .. tostring(i), false, ImGuiSelectableFlags.None) then

@@ -1,57 +1,79 @@
 {
   "window":{
-    "unobtrusive":true,
-    "padding":4,
-    "rounding":8,
-    "opacity":0.85,
     "bg":{
-      "r":0.1,
-      "a":1,
       "g":0.1,
-      "b":0.1
+      "a":1,
+      "b":0.1,
+      "r":0.1
     },
     "border":{
-      "r":0.3,
-      "a":0.6,
       "g":0.3,
-      "b":0.3
+      "a":0.6,
+      "b":0.3,
+      "r":0.3
     },
-    "use_custom_bg":true
+    "use_custom_bg":true,
+    "opacity":0.85,
+    "padding":4,
+    "rounding":8,
+    "unobtrusive":true
   },
   "buttons":{
-    "height":37.799999237061,
-    "border_size":0,
-    "rounding":6,
-    "shape":"square",
     "use_custom_colors":true,
     "colors":{
       "active":{
-        "r":0.28,
-        "a":1,
         "g":0.28,
-        "b":0.28
+        "a":1,
+        "b":0.28,
+        "r":0.28
       },
       "text":{
-        "r":0.95,
-        "a":1,
         "g":0.95,
-        "b":0.95
+        "a":1,
+        "b":0.95,
+        "r":0.95
       },
       "normal":{
-        "r":0.045371863991022,
-        "a":0.89999997615814,
         "g":0.1663920879364,
-        "b":0.95734596252441
+        "a":0.89999997615814,
+        "b":0.95734596252441,
+        "r":0.045371863991022
       },
       "hovered":{
-        "r":0.85042119026184,
-        "a":0.94999998807907,
         "g":0.053907118737698,
-        "b":0.94786727428436
+        "a":0.94999998807907,
+        "b":0.94786727428436,
+        "r":0.85042119026184
       }
     },
     "spacing":5.6669998168945,
-    "width":91.333000183105
+    "width":91.333000183105,
+    "height":37.799999237061,
+    "border_size":0,
+    "rounding":6,
+    "shape":"square"
+  },
+  "repo_custom":[{
+      "id":"offtank",
+      "description":"",
+      "label":"OffTank",
+      "actions":[{
+          "text":"/say ^attack botgroup Offtank",
+          "type":"cmd"
+        }],
+      "category":"Custom"
+    },{
+      "id":"mez",
+      "description":"",
+      "label":"Mez",
+      "actions":[{
+          "text":"^cast mesmerize byname Kasaeax",
+          "type":"cmd"
+        }],
+      "category":"Custom"
+    }],
+  "hotbar":{
+    "items":["attack_spawned","backoff","hold","guard_here","clearcamp_callback","auto_assist_toggle","summon_to_me","spawn_missing_party_bots"]
   },
   "ui":{
     "compact_color":true,
