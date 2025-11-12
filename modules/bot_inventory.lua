@@ -26,6 +26,7 @@ BotInventory.active_capture_buffers = {}
 BotInventory.capture_expected_slots = 23
 BotInventory.capture_settle_delay = 0.2
 BotInventory.capture_timeout_seconds = 4
+BotInventory.capture_slot_tolerance = 1 -- allow finalize within one missing slot (berserkers lack secondary)
 
 local function normalizePathSeparators(path)
     return path and path:gsub('\\\\', '/') or nil
@@ -865,6 +866,8 @@ function BotInventory.processBotInventoryResponse()
         local expectedSlots = BotInventory.capture_expected_slots or 23
         local settleDelay = BotInventory.capture_settle_delay or 0.2
         local timeoutSeconds = BotInventory.capture_timeout_seconds or 4
+        local slotTolerance = BotInventory.capture_slot_tolerance or 0
+        local minAcceptableSlots = math.max(1, expectedSlots - slotTolerance)
 
         if buffer and buffer.processed_slots >= expectedSlots then
             local lastLineAge = buffer.last_line_time and (os.clock() - buffer.last_line_time) or 0
@@ -877,6 +880,13 @@ function BotInventory.processBotInventoryResponse()
         local pendingAge = BotInventory.invlist_issued_time and (os.clock() - BotInventory.invlist_issued_time) or 0
         if pendingAge and pendingAge >= timeoutSeconds then
             local captured = buffer and buffer.processed_slots or 0
+            if slotTolerance > 0 and buffer and captured >= minAcceptableSlots then
+                print(string.format(
+                    "[BotInventory] Allowing incomplete inventory for %s (%d/%d slots, tolerance %d)",
+                    botName, captured, expectedSlots, slotTolerance))
+                finalizeBotInventoryCapture(botName, buffer)
+                return
+            end
             failActiveRequest(botName, string.format(
                 "Incomplete inventory from %s (%d/%d slots)", botName, captured, expectedSlots))
             return
