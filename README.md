@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/andude2/EmuBot)
+
 Finally! A visual tool to help you keep track of your ^bots and their inventories.  
 
 Drop this in your /lua folder, then run in game with a /lua run emubot.  ***NOTE***  If the folder has -main on it, you will need to rename the folder and delete -main off the end.  
@@ -28,4 +30,5 @@ Dependencies
 - EmuBot uses SQLite for persistence via `lsqlite3`.
 - On fresh MacroQuest installs, EmuBot will try to fetch `lsqlite3` automatically using `mq.PackageMan`.
 - If auto-install fails, use your package manager to install `lsqlite3` and reload EmuBot.
+
 
