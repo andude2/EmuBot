@@ -3,8 +3,8 @@
 
 local mq = require('mq')
 local ImGui = require('ImGui')
-local db = require('EmuBot.modules.db')
-local bot_inventory = require('EmuBot.modules.bot_inventory')
+local db = require('modules.db')
+local bot_inventory = require('modules.bot_inventory')
 local json = require('dkjson')
 
 local M = {}

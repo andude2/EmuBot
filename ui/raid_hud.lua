@@ -5,9 +5,10 @@
 local mq = require('mq')
 local ImGui = require('ImGui')
 local Icons = require('mq.icons')
+local config_paths = require('config')
 
 -- Optional JSON for saving settings
-local has_json, json = pcall(require, 'EmuBot.dkjson')
+local has_json, json = pcall(require, 'dkjson')
 
 local M = {}
 
@@ -665,7 +666,8 @@ local function get_script_dir()
     return dir or ''
 end
 
-local CONFIG_PATH = get_script_dir() .. 'raid_hud_config.json'
+local CONFIG_PATH = config_paths.get_path('raid_hud_config.json')
+local LEGACY_CONFIG_PATH = get_script_dir() .. 'raid_hud_config.json'
 
 local function deep_merge(dst, src)
     if type(dst) ~= 'table' or type(src) ~= 'table' then return dst end
@@ -692,7 +694,12 @@ end
 
 local function load_config()
     local f = io.open(CONFIG_PATH, 'r')
-    if not f then return false end
+    local loaded_from_legacy = false
+    if not f then
+        f = io.open(LEGACY_CONFIG_PATH, 'r')
+        if not f then return false end
+        loaded_from_legacy = true
+    end
     local ok, content = pcall(f.read, f, '*a')
     pcall(f.close, f)
     if not ok or not content or content == '' then return false end
@@ -700,6 +707,7 @@ local function load_config()
     local decoded, pos, err = json.decode(content)
     if not decoded or err then return false end
     deep_merge(config, decoded)
+    if loaded_from_legacy then pcall(save_config) end
     return true
 end
 

@@ -1,7 +1,0 @@
-{
-  "groups":{
-    "Mages":["Zyldormagaa","Zyldormagab","Zyldormagac","Zyldormagad","Zyldormagba","Zyldormagbb","Zyldormagbc","Zyldormagbd","Zyldormagca","Zyldormagcb","Zyldormagcc","Zyldormagcd"]
-  },
-  "queueDelayMs":75,
-  "selected":"Mages"
-}

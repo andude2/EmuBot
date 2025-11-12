@@ -1,7 +1,7 @@
 -- bot_inventory.lua
 local mq = require("mq")
 local json = require("dkjson")
-local db = require('EmuBot.modules.db')
+local db = require('modules.db')
 
 local BotInventory = {}
 BotInventory.bot_inventories = {}

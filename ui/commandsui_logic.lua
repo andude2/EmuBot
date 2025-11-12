@@ -1,7 +1,8 @@
 local mq = require('mq')
-local repo = require('EmuBot.ui.command_repo')
+local config_paths = require('config')
+local repo = require('ui.command_repo')
 
-local has_json, json = pcall(require, 'EmuBot.dkjson')
+local has_json, json = pcall(require, 'dkjson')
 
 local M = {}
 
@@ -261,7 +262,8 @@ local function get_script_dir()
     return dir or ''
 end
 
-local CONFIG_PATH = get_script_dir() .. 'commandsui_config.json'
+local CONFIG_PATH = config_paths.get_path('commandsui_config.json')
+local LEGACY_CONFIG_PATH = get_script_dir() .. 'commandsui_config.json'
 
 local function deep_merge(dst, src)
     if type(dst) ~= 'table' or type(src) ~= 'table' then return dst end
@@ -282,20 +284,6 @@ local function clamp01(x)
     return x
 end
 
-local function load_config()
-    local f = io.open(CONFIG_PATH, 'r')
-    if not f then return false end
-    local ok, content = pcall(f.read, f, '*a')
-    pcall(f.close, f)
-    if not ok or not content or content == '' then return false end
-    if not has_json then return false end
-    local decoded, _, err = json.decode(content)
-    if not decoded or err then return false end
-    deep_merge(config, decoded)
-    config.window.opacity = clamp01(tonumber(config.window.opacity or 1.0) or 1.0)
-    return true
-end
-
 local function save_config()
     if not has_json then return false end
     local encoded = json.encode(config, {indent=true})
@@ -304,6 +292,26 @@ local function save_config()
     local ok = pcall(f.write, f, encoded)
     pcall(f.close, f)
     return ok and true or false
+end
+
+local function load_config()
+    local f = io.open(CONFIG_PATH, 'r')
+    local loaded_from_legacy = false
+    if not f then
+        f = io.open(LEGACY_CONFIG_PATH, 'r')
+        if not f then return false end
+        loaded_from_legacy = true
+    end
+    local ok, content = pcall(f.read, f, '*a')
+    pcall(f.close, f)
+    if not ok or not content or content == '' then return false end
+    if not has_json then return false end
+    local decoded, _, err = json.decode(content)
+    if not decoded or err then return false end
+    deep_merge(config, decoded)
+    config.window.opacity = clamp01(tonumber(config.window.opacity or 1.0) or 1.0)
+    if loaded_from_legacy then pcall(save_config) end
+    return true
 end
 
 pcall(load_config)

@@ -2,8 +2,8 @@
 -- EmuBot Upgrades: determine which bots can use the cursor item and allow swapping
 
 local mq = require('mq')
-local bot_inventory = require('EmuBot.modules.bot_inventory')
-local applyTableSort = require('EmuBot.modules.ui_table_utils').applyTableSort
+local bot_inventory = require('modules.bot_inventory')
+local applyTableSort = require('modules.ui_table_utils').applyTableSort
 
 local U = {}
 

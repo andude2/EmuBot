@@ -1,12 +1,12 @@
 local mq = require('mq')
 local ImGui = require('ImGui')
 local Icons = require('mq.icons')
-local repo = require('EmuBot.ui.command_repo')
-local logic = require('EmuBot.ui.commandsui_logic')
+local repo = require('ui.command_repo')
+local logic = require('ui.commandsui_logic')
 
 -- Bot HotBar UI module for EmuBot
 -- Usage from your main script:
---   local commandsui = require('EmuBot.ui.commandsui')
+--   local commandsui = require('ui.commandsui')
 --   commandsui.start()
 
 local M = {}
@@ -399,7 +399,7 @@ local function draw_hotbar()
         ImGui.SameLine(0, 3) -- Small spacing between buttons
         if ImGui.SmallButton(Icons.FA_DOT_CIRCLE_O) then
             -- Toggle the raid HUD
-            local ok, raid_hud = pcall(require, 'EmuBot.ui.raid_hud')
+            local ok, raid_hud = pcall(require, 'ui.raid_hud')
             if ok and raid_hud and raid_hud.toggle then
                 raid_hud.toggle()
             else

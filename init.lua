@@ -1,16 +1,16 @@
 local mq = require('mq')
 local ImGui = require('ImGui')
 
-local bot_inventory = require('EmuBot.modules.bot_inventory')
-local bot_management = require('EmuBot.modules.bot_management')
-local bot_groups = require('EmuBot.modules.bot_groups')
-local raid_manager = require('EmuBot.modules.raid_manager')
-local upgrade = require('EmuBot.modules.upgrade')
-local db = require('EmuBot.modules.db')
-local commandsui = require('EmuBot.ui.commandsui')
-local bot_controls = require('EmuBot.ui.bot_controls')
-local raid_hud = require('EmuBot.ui.raid_hud')
-local applyTableSort = require('EmuBot.modules.ui_table_utils').applyTableSort
+local bot_inventory = require('modules.bot_inventory')
+local bot_management = require('modules.bot_management')
+local bot_groups = require('modules.bot_groups')
+local raid_manager = require('modules.raid_manager')
+local upgrade = require('modules.upgrade')
+local db = require('modules.db')
+local commandsui = require('ui.commandsui')
+local bot_controls = require('ui.bot_controls')
+local raid_hud = require('ui.raid_hud')
+local applyTableSort = require('modules.ui_table_utils').applyTableSort
 
 -- EmuBot UI style helpers: round all relevant UI elements at radius 8
 local function EmuBot_PushRounding()

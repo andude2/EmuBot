@@ -2,9 +2,9 @@
 -- Simple bot management tab: list bots with quick actions (spawn, invite to group, camp)
 
 local mq = require('mq')
-local bot_inventory = require('EmuBot.modules.bot_inventory')
-local race_class_utils = require('EmuBot.modules.race_class_utils')
-local applyTableSort = require('EmuBot.modules.ui_table_utils').applyTableSort
+local bot_inventory = require('modules.bot_inventory')
+local race_class_utils = require('modules.race_class_utils')
+local applyTableSort = require('modules.ui_table_utils').applyTableSort
 
 local M = {}
 

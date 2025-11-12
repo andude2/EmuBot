@@ -2,8 +2,8 @@
 -- Bot group management system for spawning and inviting groups of bots
 
 local mq = require('mq')
-local db = require('EmuBot.modules.db')
-local bot_inventory = require('EmuBot.modules.bot_inventory')
+local db = require('modules.db')
+local bot_inventory = require('modules.bot_inventory')
 
 local M = {}
 

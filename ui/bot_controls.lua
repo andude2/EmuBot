@@ -1,6 +1,7 @@
 local mq = require('mq')
 local ImGui = require('ImGui')
-local bot_inventory = require('EmuBot.modules.bot_inventory')
+local config_paths = require('config')
+local bot_inventory = require('modules.bot_inventory')
 
 local M = {
     show = false,
@@ -438,12 +439,18 @@ local function _script_dir()
     return dir or ''
 end
 
-local _batch_config_path = _script_dir() .. 'batch_commands.json'
-local _has_json, _json = pcall(require, 'EmuBot.dkjson')
+local _batch_config_path = config_paths.get_path('batch_commands.json')
+local _legacy_batch_path = _script_dir() .. 'batch_commands.json'
+local _has_json, _json = pcall(require, 'dkjson')
 
 local function _batch_load()
     local f = io.open(_batch_config_path, 'r')
-    if not f then return false end
+    local loaded_from_legacy = false
+    if not f then
+        f = io.open(_legacy_batch_path, 'r')
+        if not f then return false end
+        loaded_from_legacy = true
+    end
     local ok, content = pcall(f.read, f, '*a')
     pcall(f.close, f)
     if not ok or not content or content == '' or not _has_json then return false end
@@ -452,6 +459,7 @@ local function _batch_load()
     M._batch.groups = decoded.groups or {}
     M._batch.selected = decoded.selected or nil
     M._batch.queueDelayMs = tonumber(decoded.queueDelayMs or 75) or 75
+    if loaded_from_legacy then pcall(_batch_save) end
     return true
 end
 
