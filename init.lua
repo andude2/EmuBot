@@ -82,6 +82,7 @@ local botUI = {
     upgradePosX = 120,
     upgradePosY = 60,
     upgradeButtonSize = 50,
+    closeUpgradeWindowOnSwap = true,
     -- Local inventory comparison
     localInventoryCache = nil,
     localInventoryCacheTime = 0,
@@ -110,6 +111,10 @@ local botUI = {
     lastPurgeMessage = nil,
     lastPurgeWasSuccess = false,
 }
+
+if upgrade and upgrade.set_close_window_on_swap then
+    upgrade.set_close_window_on_swap(botUI.closeUpgradeWindowOnSwap)
+end
 
 -- Forward declare helpers referenced before their definitions
 local get_bot_class_abbrev
@@ -3191,6 +3196,20 @@ if ImGui.BeginTabBar('BotEquippedViewTabs', ImGuiTabBarFlags.Reorderable) then
                 end
                 if ImGui.IsItemHovered() then
                     ImGui.SetTooltip('Seconds to skip a failed bot before allowing retry')
+                end
+
+                ImGui.Separator()
+                ImGui.Text('Upgrade Window')
+                local closePref = botUI.closeUpgradeWindowOnSwap and true or false
+                local newClosePref, closeChanged = ImGui.Checkbox('Close upgrade window after swap##UpgradeClose', closePref)
+                if closeChanged then
+                    botUI.closeUpgradeWindowOnSwap = newClosePref and true or false
+                    if upgrade and upgrade.set_close_window_on_swap then
+                        upgrade.set_close_window_on_swap(botUI.closeUpgradeWindowOnSwap)
+                    end
+                end
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip('Automatically close the upgrade comparison window after a successful swap')
                 end
 
                 ImGui.Separator()

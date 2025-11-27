@@ -10,6 +10,15 @@ local U = {}
 U._candidates = {}
 U._show_compare = false
 U._pending_refresh = {}
+U._close_window_on_swap = true
+
+function U.set_close_window_on_swap(value)
+    U._close_window_on_swap = value and true or false
+end
+
+function U.get_close_window_on_swap()
+    return U._close_window_on_swap
+end
 
 -- Forward declaration so functions defined earlier can call it safely
 local get_cursor_stats
@@ -680,6 +689,7 @@ function U.draw_compare_window()
         })
     end
 
+    local closeAfterSwap = false
     if ImGui.BeginTable('EmuBotUpgradeCompare', numCols,
             ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
         applyTableSort(compareRows, ImGui.TableGetSortSpecs(), {
@@ -814,20 +824,29 @@ function U.draw_compare_window()
 
             -- Action (inline)
             ImGui.TableNextColumn()
+            local swapped = false
             if ImGui.SmallButton('Swap##cmp' .. tostring(i)) then
                 if swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName) then
                     table.remove(U._candidates, i)
+                    swapped = true
+                    closeAfterSwap = true
                 end
             end
             if ImGui.IsItemHovered() then
                 ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
             end
             
-
             ImGui.PopID()
+            if swapped then break end
         end
 
         ImGui.EndTable()
+    end
+
+    if closeAfterSwap and U._close_window_on_swap then
+        U._show_compare = false
+        ImGui.End()
+        return
     end
 
     ImGui.End()
