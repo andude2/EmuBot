@@ -11,6 +11,7 @@ U._candidates = {}
 U._show_compare = false
 U._pending_refresh = {}
 U._close_window_on_swap = true
+U._last_cursor_id = nil
 
 function U.set_close_window_on_swap(value)
     U._close_window_on_swap = value and true or false
@@ -341,6 +342,26 @@ end
 
 function U.clear()
     clear_candidates()
+end
+
+function U.poll_cursor_changes()
+    local cursor = mq.TLO.Cursor
+    local currentId = nil
+    if cursor and cursor() then
+        local ok, cid = pcall(function() return cursor.ID() end)
+        if ok then currentId = tonumber(cid or 0) or 0 end
+    end
+
+    if currentId == U._last_cursor_id then return end
+    U._last_cursor_id = currentId
+
+    if currentId and currentId > 0 then
+        U.clear()
+        U.poll_iu()
+    else
+        U.clear()
+        U._show_compare = false
+    end
 end
 
 -- Helper to check if item is a weapon type

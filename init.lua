@@ -84,6 +84,7 @@ local botUI = {
     upgradePosY = 60,
     upgradeButtonSize = 50,
     closeUpgradeWindowOnSwap = true,
+    upgradepoll = true,
     -- Local inventory comparison
     localInventoryCache = nil,
     localInventoryCacheTime = 0,
@@ -3720,8 +3721,13 @@ local function drawUpgradeQuickButton()
                 mq.cmd('/say ^iu')
             end
         end
+        if ImGui.IsItemClicked(ImGuiMouseButton.Right) then
+            botUI.upgradepoll = not botUI.upgradepoll
+            printf('[EmuBot] IU auto-poll %s', botUI.upgradepoll and 'enabled' or 'disabled')
+        end
         if ImGui.IsItemHovered() then
-            ImGui.SetTooltip('Poll bots for upgrades (^iu)')
+            local mode = botUI.upgradepoll and 'ON' or 'OFF'
+            ImGui.SetTooltip(string.format('Poll bots for upgrades (^iu)\nRight click: Toggle auto-poll (%s)', mode))
         end
 
         ImGui.PopStyleVar(1)
@@ -3956,6 +3962,9 @@ local function main()
         bot_groups.process_invitations()
         if connected_players and connected_players.process then
             connected_players.process()
+        end
+        if botUI.showUpgradeFloating and botUI.upgradepoll and upgrade and upgrade.poll_cursor_changes then
+            upgrade.poll_cursor_changes()
         end
         processDeferredTasks()
         
