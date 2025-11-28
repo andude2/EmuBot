@@ -261,6 +261,22 @@ local function swap_to_bot(botName, itemID, slotID, slotName, itemName)
             return
         end
 
+        -- Capture stats/icon/link from the cursor before handing to the bot
+        local swapAC, swapHP, swapMana = get_cursor_stats()
+        local swapDamage, swapDelay = get_cursor_weapon_stats()
+        local swapIcon = 0
+        local swapLink, swapRaw = nil, nil
+        local cursorTLO = mq.TLO.Cursor
+        if cursorTLO and cursorTLO() then
+            swapIcon = tonumber(cursorTLO.Icon() or 0) or 0
+            if cursorTLO.ItemLink then
+                local okClickable, clickable = pcall(function() return cursorTLO.ItemLink('CLICKABLE')() end)
+                if okClickable and clickable and clickable ~= '' then swapLink = clickable end
+                local okRaw, raw = pcall(function() return cursorTLO.ItemLink('RAW')() end)
+                if okRaw and raw and raw ~= '' then swapRaw = raw end
+            end
+        end
+
         -- Step 3: give to bot by name
         mq.cmdf('/say ^ig byname %s', botName)
         mq.delay(500)
@@ -271,8 +287,31 @@ local function swap_to_bot(botName, itemID, slotID, slotName, itemName)
             mq.delay(500)
         end
 
-        -- Step 5: refresh to reflect actual equip slot
-        U.queue_refresh(botName, 0.8, 3)
+        -- Step 5: update cached inventory without forcing ^invlist when possible
+        local applied = false
+        if bot_inventory and bot_inventory.applySwapFromCursor and slotID ~= nil then
+            local ok = bot_inventory.applySwapFromCursor(
+                botName,
+                slotID,
+                slotName,
+                itemID,
+                itemName,
+                swapAC,
+                swapHP,
+                swapMana,
+                swapIcon,
+                swapDamage,
+                swapDelay,
+                swapLink,
+                swapRaw
+            )
+            applied = ok and true or false
+        end
+
+        if not applied then
+            -- Fallback: request a refresh if direct apply failed
+            U.queue_refresh(botName, 0.8, 3)
+        end
     end
 
     if type(_G.enqueueTask) == 'function' then

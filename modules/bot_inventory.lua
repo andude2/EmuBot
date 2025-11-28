@@ -1076,7 +1076,7 @@ end
 --  itemName  - name of the cursor item
 --  ac,hp,mana,icon (numbers) - optional stats/icon to set; nil treated as 0
 --  damage,delay (numbers) - optional weapon stats; nil treated as 0
-function BotInventory.applySwapFromCursor(botName, slotID, slotName, itemID, itemName, ac, hp, mana, icon, damage, delay)
+function BotInventory.applySwapFromCursor(botName, slotID, slotName, itemID, itemName, ac, hp, mana, icon, damage, delay, itemlink, rawline)
     assert(slotID or slotName, "Must include either a Item Slot ID or Item Slot Name")
     assert(itemName, "Items have to have a name!")
     if not botName or slotID == nil then return false, 'bad args' end
@@ -1089,8 +1089,8 @@ function BotInventory.applySwapFromCursor(botName, slotID, slotName, itemID, ite
         name = itemName,
         slotid = tonumber(slotID),
         slotname = slotName,
-        itemlink = nil,
-        rawline = nil,
+        itemlink = itemlink,
+        rawline = rawline,
         itemID = tonumber(itemID) or 0,
         icon = tonumber(icon or 0) or 0,
         ac = tonumber(ac or 0) or 0,
