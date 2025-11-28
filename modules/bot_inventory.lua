@@ -2,6 +2,8 @@
 local mq = require("mq")
 local json = require("dkjson")
 local db = require('modules.db')
+local ok_connected, connected_players = pcall(require, 'modules.connected_players')
+if not ok_connected then connected_players = nil end
 
 local BotInventory = {}
 BotInventory.bot_inventories = {}
@@ -135,6 +137,51 @@ local function resolveCurrentOwner()
     return 'unknown'
 end
 
+local function getBotOwner(botName)
+    if not botName or botName == '' then return nil end
+    local data = BotInventory.bot_inventories and BotInventory.bot_inventories[botName]
+    if data and data.owner and data.owner ~= '' then
+        return data.owner
+    end
+    local meta = BotInventory.bot_list_capture_set and BotInventory.bot_list_capture_set[botName]
+    if meta and meta.Owner and meta.Owner ~= '' then
+        return meta.Owner
+    end
+    return nil
+end
+
+local function ownerIsDisplayable(owner)
+    if not owner or owner == '' then
+        -- Without owner metadata we can't definitively filter, so allow the bot.
+        return true
+    end
+    local currentOwner = BotInventory.getCurrentOwner()
+    if currentOwner and owner == currentOwner then
+        return true
+    end
+    if connected_players and connected_players.is_connected then
+        local ok, result = pcall(connected_players.is_connected, owner)
+        if ok and result then
+            return true
+        end
+    end
+    return false
+end
+
+function BotInventory.getBotOwner(botName)
+    return getBotOwner(botName)
+end
+
+function BotInventory.isBotOwnedLocally(botName)
+    if not botName or botName == '' then return false end
+    local owner = getBotOwner(botName)
+    if owner and owner ~= '' then
+        return owner == BotInventory.getCurrentOwner()
+    end
+    -- Without owner metadata assume local ownership (legacy data)
+    return true
+end
+
 local function resetStateForOwner(owner)
     BotInventory.bot_inventories = {}
     BotInventory.pending_requests = {}
@@ -223,6 +270,37 @@ local function cloneInventoryState(data)
         table.insert(copy.equipped, cloneItemState(item))
     end
     return copy
+end
+
+local function cloneBotListEntry(entry)
+    if not entry then return nil end
+    local copy = {}
+    for k, v in pairs(entry) do
+        copy[k] = v
+    end
+    return copy
+end
+
+local function clearOwnerBotList(owner)
+    if not owner or owner == '' then return end
+    if not BotInventory.bot_list_capture_set then return end
+    for name, meta in pairs(BotInventory.bot_list_capture_set) do
+        local entryOwner = (meta and meta.Owner) or owner
+        if entryOwner == owner then
+            BotInventory.bot_list_capture_set[name] = nil
+        end
+    end
+end
+
+local function clearOwnerInventories(owner)
+    if not owner or owner == '' then return end
+    if not BotInventory.bot_inventories then return end
+    for name, data in pairs(BotInventory.bot_inventories) do
+        local entryOwner = (data and data.owner) or owner
+        if entryOwner == owner then
+            BotInventory.bot_inventories[name] = nil
+        end
+    end
 end
 
 local function beginCaptureBuffer(botName)
@@ -789,16 +867,19 @@ end
 
 function BotInventory.isBotOwnedByCurrentCharacter(botName)
     if not botName or botName == '' then return false end
-    local owner = BotInventory.getCurrentOwner()
-    local data = BotInventory.bot_inventories and BotInventory.bot_inventories[botName]
-    if data and data.owner then
-        return data.owner == owner
-    end
-    local meta = BotInventory.bot_list_capture_set and BotInventory.bot_list_capture_set[botName]
-    if meta and meta.Owner then
-        return meta.Owner == owner
-    end
-    return true
+    local owner = getBotOwner(botName)
+    return ownerIsDisplayable(owner)
+end
+
+function BotInventory.isBotOwnedByPeer(botName)
+    if not botName or botName == '' then return false end
+    if not connected_players or not connected_players.is_connected then return false end
+    local owner = getBotOwner(botName)
+    if not owner or owner == '' then return false end
+    local current = BotInventory.getCurrentOwner()
+    if owner == current then return false end
+    local ok, result = pcall(connected_players.is_connected, owner)
+    return ok and result or false
 end
 
 function BotInventory.getAllBots()
@@ -814,6 +895,30 @@ function BotInventory.getAllBots()
     return names
 end
 
+function BotInventory.getBotsByScope(scope)
+    local result = {}
+    local mode = scope or 'connected'
+    local includeRemote = mode ~= 'local'
+    if BotInventory.bot_list_capture_set then
+        for name, meta in pairs(BotInventory.bot_list_capture_set) do
+            local owner = meta and meta.Owner or getBotOwner(name)
+            local isLocal = BotInventory.isBotOwnedLocally and BotInventory.isBotOwnedLocally(name)
+            local allowed = false
+            if isLocal then
+                allowed = true
+            elseif includeRemote and owner and owner ~= '' and connected_players and connected_players.is_connected then
+                local ok, res = pcall(connected_players.is_connected, owner)
+                allowed = ok and res
+            end
+            if allowed then
+                table.insert(result, name)
+            end
+        end
+    end
+    table.sort(result)
+    return result
+end
+
 function BotInventory.refreshBotList()
     if BotInventory.refreshing_bot_list then
         return
@@ -821,7 +926,8 @@ function BotInventory.refreshBotList()
 
     print("[BotInventory] Refreshing bot list...")
     BotInventory.refreshing_bot_list = true
-    BotInventory.bot_list_capture_set = {}
+    BotInventory.bot_list_capture_set = BotInventory.bot_list_capture_set or {}
+    clearOwnerBotList(BotInventory.getCurrentOwner())
     BotInventory.bot_list_start_time = os.time()
 
     mq.cmd("/say ^botlist")
@@ -1266,6 +1372,65 @@ function BotInventory.init()
     BotInventory.cached_bot_list = {}
     BotInventory.initialized = true
     return true
+end
+
+function BotInventory.buildSyncSnapshot()
+    local owner = BotInventory.getCurrentOwner()
+    local botList = {}
+    local botInventory = {}
+    for name, meta in pairs(BotInventory.bot_list_capture_set or {}) do
+        local entryOwner = (meta and meta.Owner) or owner
+        if entryOwner == owner then
+            local copy = cloneBotListEntry(meta) or {}
+            copy.Name = copy.Name or name
+            copy.Owner = owner
+            botList[name] = copy
+        end
+    end
+    for name, data in pairs(BotInventory.bot_inventories or {}) do
+        local entryOwner = (data and data.owner) or owner
+        if entryOwner == owner then
+            local copy = cloneInventoryState(data) or {}
+            copy.name = copy.name or name
+            copy.owner = owner
+            botInventory[name] = copy
+        end
+    end
+    return {
+        owner = owner,
+        bot_list = botList,
+        bot_inventory = botInventory,
+    }
+end
+
+function BotInventory.applyRemoteSnapshot(owner, snapshot)
+    if not owner or owner == '' or not snapshot then return end
+    local currentOwner = BotInventory.getCurrentOwner()
+    if owner == currentOwner then return end
+    BotInventory.bot_list_capture_set = BotInventory.bot_list_capture_set or {}
+    BotInventory.bot_inventories = BotInventory.bot_inventories or {}
+    local botList = snapshot.bot_list or snapshot.botList
+    if botList and type(botList) == 'table' then
+        for name, entry in pairs(botList) do
+            if type(entry) == 'table' then
+                local copy = cloneBotListEntry(entry) or {}
+                copy.Name = copy.Name or name
+                copy.Owner = owner
+                BotInventory.bot_list_capture_set[name] = copy
+            end
+        end
+    end
+    local inv = snapshot.bot_inventory or snapshot.botInventory
+    if inv and type(inv) == 'table' then
+        for name, data in pairs(inv) do
+            if type(data) == 'table' then
+                local copy = cloneInventoryState(data) or {}
+                copy.name = copy.name or name
+                copy.owner = owner
+                BotInventory.bot_inventories[name] = copy
+            end
+        end
+    end
 end
 
 return BotInventory

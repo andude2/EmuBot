@@ -10,6 +10,7 @@ local db = require('modules.db')
 local commandsui = require('ui.commandsui')
 local bot_controls = require('ui.bot_controls')
 local raid_hud = require('ui.raid_hud')
+local connected_players = require('modules.connected_players')
 local applyTableSort = require('modules.ui_table_utils').applyTableSort
 
 -- EmuBot UI style helpers: round all relevant UI elements at radius 8
@@ -103,6 +104,7 @@ local botUI = {
     _autoScannedItems = 0, -- Track items auto-scanned due to mismatches,
     -- Visual tab options
     showClassInVisual = false,
+    visualDisplayScope = 'connected', -- 'local' or 'connected'
     -- Selector options
     viewerAppendClassAbbrevInSelector = false,
     -- Cache of item stats keyed by itemID to avoid duplicate scans per session
@@ -110,6 +112,7 @@ local botUI = {
     -- Database maintenance status
     lastPurgeMessage = nil,
     lastPurgeWasSuccess = false,
+    _remoteRefreshCooldown = {},
 }
 
 if upgrade and upgrade.set_close_window_on_swap then
@@ -343,6 +346,67 @@ local function collectBotNames()
     return list, set
 end
 
+local function get_bot_owner_name(botName)
+    if not botName or botName == '' then return nil end
+    if bot_inventory and bot_inventory.getBotOwner then
+        local owner = bot_inventory.getBotOwner(botName)
+        if owner and owner ~= '' then return owner end
+    end
+    return nil
+end
+
+local function format_bot_label_with_owner(botName, baseLabel)
+    if not botName or botName == '' then return baseLabel or '' end
+    local label = baseLabel
+    if not label or label == '' then
+        label = botName
+    end
+    local owner = get_bot_owner_name(botName)
+    if owner and owner ~= '' then
+        label = string.format('%s [%s]', label, owner)
+    end
+    return label
+end
+
+local function build_bot_selector_label(botName)
+    if not botName or botName == '' then return '' end
+    local baseLabel
+    if botUI.viewerShowClassInSelector then
+        baseLabel = get_bot_class_abbrev(botName) or botName
+    elseif botUI.viewerAppendClassAbbrevInSelector then
+        local cls = get_bot_class_abbrev(botName) or 'UNK'
+        baseLabel = string.format('%s [%s]', botName, cls)
+    else
+        baseLabel = botName
+    end
+    return format_bot_label_with_owner(botName, baseLabel)
+end
+
+local function item_has_useful_stats(item)
+    if not item then return false end
+    local ac = tonumber(item.ac or 0) or 0
+    local hp = tonumber(item.hp or 0) or 0
+    local mana = tonumber(item.mana or 0) or 0
+    local dmg = tonumber(item.damage or 0) or 0
+    local delay = tonumber(item.delay or 0) or 0
+    if ac > 0 or hp > 0 or mana > 0 or dmg > 0 or delay > 0 then return true end
+    if item.itemlink and item.itemlink ~= '' then return true end
+    return false
+end
+
+local function request_remote_inventory_refresh(botName)
+    if not connected_players or not connected_players.request_remote_refresh then return end
+    if not bot_inventory or not bot_inventory.getBotOwner then return end
+    local owner = bot_inventory.getBotOwner(botName)
+    if not owner or owner == '' then return end
+    if bot_inventory.getCurrentOwner and owner == bot_inventory.getCurrentOwner() then return end
+    local now = os.time()
+    local last = botUI._remoteRefreshCooldown[botName] or 0
+    if now - last < 10 then return end
+    botUI._remoteRefreshCooldown[botName] = now
+    connected_players.request_remote_refresh(owner, {botName})
+end
+
 local function getCachedInventoryStats()
     local totalItems = 0
     local itemsWithLinks = 0
@@ -395,12 +459,23 @@ local function collectBotSlotItems(slotId)
         end
     end
 
+    local scope = botUI.visualDisplayScope or 'connected'
+
     for _, botName in ipairs(names) do
-        local owned = true
-        if bot_inventory and bot_inventory.isBotOwnedByCurrentCharacter then
-            owned = bot_inventory.isBotOwnedByCurrentCharacter(botName)
+        local displayable = true
+        if scope == 'local' then
+            displayable = not bot_inventory.isBotOwnedLocally or bot_inventory.isBotOwnedLocally(botName)
+        else
+            if bot_inventory and bot_inventory.isBotOwnedByCurrentCharacter then
+                displayable = bot_inventory.isBotOwnedByCurrentCharacter(botName)
+            end
         end
-        if owned then
+        if displayable then
+            local isLocal = true
+            if bot_inventory and bot_inventory.isBotOwnedLocally then
+                isLocal = bot_inventory.isBotOwnedLocally(botName)
+            end
+
             local foundItem = nil
             local cachedData = bot_inventory and bot_inventory.bot_inventories and bot_inventory.bot_inventories[botName] or nil
 
@@ -424,16 +499,21 @@ local function collectBotSlotItems(slotId)
 
             table.insert(results, { bot = botName, item = foundItem })
 
-            if not foundItem and bot_inventory and bot_inventory.requestBotInventory then
-                botUI._botInventoryLastAttempt[botName] = botUI._botInventoryLastAttempt[botName] or 0
-                botUI._botInventoryFetchSet[botName] = botUI._botInventoryFetchSet[botName] or false
-                if not botUI._botInventoryFetchSet[botName] then
-                    table.insert(botUI._botInventoryFetchQueue, botName)
-                    botUI._botInventoryFetchSet[botName] = true
-                    if not botUI._botInventoryFetchActive then
-                        botUI._botInventoryFetchActive = true
-                        enqueueTask(botUI._processBotInventoryQueue)
+            local missingData = (not foundItem) or (not item_has_useful_stats(foundItem))
+            if missingData then
+                if isLocal and bot_inventory and bot_inventory.requestBotInventory then
+                    botUI._botInventoryLastAttempt[botName] = botUI._botInventoryLastAttempt[botName] or 0
+                    botUI._botInventoryFetchSet[botName] = botUI._botInventoryFetchSet[botName] or false
+                    if not botUI._botInventoryFetchSet[botName] then
+                        table.insert(botUI._botInventoryFetchQueue, botName)
+                        botUI._botInventoryFetchSet[botName] = true
+                        if not botUI._botInventoryFetchActive then
+                            botUI._botInventoryFetchActive = true
+                            enqueueTask(botUI._processBotInventoryQueue)
+                        end
                     end
+                elseif not isLocal then
+                    request_remote_inventory_refresh(botName)
                 end
             end
         end
@@ -483,6 +563,11 @@ end
 
 function botUI._enqueueBotInventoryFetch(botName)
     if not botName or botName == '' or not bot_inventory or not bot_inventory.requestBotInventory then
+        return
+    end
+
+    if bot_inventory.isBotOwnedLocally and not bot_inventory.isBotOwnedLocally(botName) then
+        -- Remote peer bots synchronize via heartbeat snapshots; skip direct fetch
         return
     end
     
@@ -915,6 +1000,13 @@ function botUI._processBotInventoryQueue()
     if not botName then
         table.remove(queue, 1)
         return botUI._processBotInventoryQueue()
+    end
+
+    if bot_inventory.isBotOwnedLocally and not bot_inventory.isBotOwnedLocally(botName) then
+        table.remove(queue, 1)
+        botUI._botInventoryFetchSet[botName] = nil
+        enqueueTask(botUI._processBotInventoryQueue)
+        return true
     end
     
     -- Check if bot is skipped due to failures
@@ -2172,6 +2264,20 @@ local function drawVisualTab(equippedItems)
                 local newVal, pressed = ImGui.Checkbox('Show Class##vis_showclass', cur)
                 if pressed then botUI.showClassInVisual = newVal and true or false end
             end
+            ImGui.SameLine()
+            do
+                ImGui.Text('Scope:')
+                ImGui.SameLine()
+                local localSelected = (botUI.visualDisplayScope == 'local')
+                if ImGui.RadioButton('Local', localSelected) then
+                    botUI.visualDisplayScope = 'local'
+                end
+                ImGui.SameLine()
+                local connectedSelected = (botUI.visualDisplayScope ~= 'local')
+                if ImGui.RadioButton('All', connectedSelected) then
+                    botUI.visualDisplayScope = 'connected'
+                end
+            end
             if #slotResults == 0 then
                 ImGui.Text('No bot data available for this slot yet.')
             else
@@ -2215,7 +2321,11 @@ local function drawVisualTab(equippedItems)
                     for _, entry in ipairs(slotResults) do
                         ImGui.TableNextRow()
                         ImGui.TableNextColumn()
-                        local botLabel = (entry.bot or 'Unknown') .. '##vis_target_' .. tostring(entry.bot or '?')
+                        local displayName = format_bot_label_with_owner(entry.bot or '')
+                        if not displayName or displayName == '' then
+                            displayName = entry.bot or 'Unknown'
+                        end
+                        local botLabel = displayName .. '##vis_target_' .. tostring(entry.bot or '?')
                         if ImGui.Selectable(botLabel, false, ImGuiSelectableFlags.None) then
                             local botName = entry.bot
                             if botName then
@@ -2800,23 +2910,24 @@ EmuBot_PushRounding()
 
     if shouldShow then
         local windowWidth = ImGui.GetWindowWidth()
-        local botList = collectBotNames()
+        local scope = botUI.visualDisplayScope or 'connected'
+        local botList = {}
+        if bot_inventory and bot_inventory.getBotsByScope then
+            botList = bot_inventory.getBotsByScope(scope)
+        else
+            botList = collectBotNames()
+        end
         local displayList = {}
         for _, name in ipairs(botList) do
-            if botUI.viewerShowClassInSelector then
-                local cls = get_bot_class_abbrev(name)
-                table.insert(displayList, cls)
-            else
-                if botUI.viewerAppendClassAbbrevInSelector then
-                    local cls = get_bot_class_abbrev(name)
-                    table.insert(displayList, string.format('%s [%s]', name, cls))
-                else
-                    table.insert(displayList, name)
-                end
-            end
+            table.insert(displayList, build_bot_selector_label(name))
         end
         local currentBotName = botUI.selectedBot and botUI.selectedBot.name or ''
-        local comboLabel = currentBotName ~= '' and currentBotName or (#botList > 0 and 'Select Bot' or 'No Bots')
+        local comboLabel = ''
+        if currentBotName ~= '' then
+            comboLabel = build_bot_selector_label(currentBotName)
+        else
+            comboLabel = (#botList > 0 and 'Select Bot' or 'No Bots')
+        end
 
         -- Controls row: refresh / clear buttons then selector
         if ImGui.Button('Refresh Bot List') then
@@ -2889,15 +3000,7 @@ EmuBot_PushRounding()
                     botUI.selectedBotSlotName = nil
                     equippedItems = (botData and botData.equipped) or {}
                     currentBotName = botName
-                    if botUI.viewerShowClassInSelector then
-                        comboLabel = get_bot_class_abbrev(botName)
-                    else
-                        if botUI.viewerAppendClassAbbrevInSelector then
-                            comboLabel = string.format('%s [%s]', botName, get_bot_class_abbrev(botName))
-                        else
-                            comboLabel = botName
-                        end
-                    end
+                    comboLabel = build_bot_selector_label(botName)
                 end
             elseif changed then
                 printf('[EmuBot] Warning: Invalid bot selection index %s (list size: %d)', tostring(selectedIndex1), #botList)
@@ -3750,6 +3853,51 @@ local function main()
         print('[EmuBot] Failed to initialize bot inventory system')
         return
     end
+
+    if connected_players and connected_players.set_data_provider then
+        connected_players.set_data_provider(function()
+            return bot_inventory.buildSyncSnapshot()
+        end)
+    end
+    if connected_players and connected_players.set_remote_data_handler then
+        connected_players.set_remote_data_handler(function(owner, snapshot)
+            bot_inventory.applyRemoteSnapshot(owner, snapshot)
+        end)
+    end
+    if connected_players and connected_players.set_request_handler then
+        connected_players.set_request_handler(function(source, payload)
+            if not payload or not payload.type then return end
+            if payload.type == 'refresh_bots' then
+                local botList = {}
+                if type(payload.bots) == 'table' then
+                    for _, botName in ipairs(payload.bots) do
+                        if botName and botName ~= '' then table.insert(botList, botName) end
+                    end
+                elseif type(payload.bot) == 'string' then
+                    table.insert(botList, payload.bot)
+                end
+                for _, botName in ipairs(botList) do
+                    if not bot_inventory.isBotOwnedLocally or bot_inventory.isBotOwnedLocally(botName) then
+                        botUI._enqueueBotInventoryFetch(botName)
+                    end
+                end
+            elseif payload.type == 'spawn_for_raid' then
+                if raid_manager and raid_manager.handle_remote_spawn_request then
+                    local list = payload.bots
+                    if type(list) ~= 'table' and payload.bot then
+                        list = {payload.bot}
+                    end
+                    if type(list) == 'table' then
+                        raid_manager.handle_remote_spawn_request(list)
+                    end
+                end
+            end
+        end)
+    end
+
+    if connected_players and connected_players.init then
+        connected_players.init()
+    end
     
     -- Connect skip system to bot inventory module
     bot_inventory.skipCheckFunction = function(botName)
@@ -3806,6 +3954,9 @@ local function main()
         mq.doevents()
         bot_inventory.process()
         bot_groups.process_invitations()
+        if connected_players and connected_players.process then
+            connected_players.process()
+        end
         processDeferredTasks()
         
         -- Process delayed refresh after bot creation

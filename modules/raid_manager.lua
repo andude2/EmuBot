@@ -5,6 +5,7 @@ local mq = require('mq')
 local ImGui = require('ImGui')
 local db = require('modules.db')
 local bot_inventory = require('modules.bot_inventory')
+local connected_players = require('modules.connected_players')
 local json = require('dkjson')
 
 local M = {}
@@ -26,6 +27,8 @@ end
 
 -- forward declarations
 local inDesired
+local isSpawned
+local inviteToRaid
 
 -- deferred execution hook (set by init.lua)
 M._enqueue = nil
@@ -39,6 +42,101 @@ end
 
 local function initLayout()
     for g = 1, 12 do M.desiredLayout[g] = M.desiredLayout[g] or {} end
+end
+
+local function getBotOwner(name)
+    if not name or name == '' then return nil end
+    if bot_inventory and bot_inventory.getBotOwner then
+        return bot_inventory.getBotOwner(name)
+    end
+    return nil
+end
+
+local function isLocalBot(name)
+    if not bot_inventory or not bot_inventory.isBotOwnedLocally then return true end
+    return bot_inventory.isBotOwnedLocally(name)
+end
+
+local function isOwnerInRaid(owner)
+    if not owner or owner == '' then return false end
+    local raid = mq.TLO.Raid
+    if not raid or not raid.Members or raid.Members() == 0 then return false end
+    local count = raid.Members()
+    for i = 1, count do
+        local member = raid.Member(i)
+        if member and member.Name and member.Name() and member.Name():lower() == owner:lower() then
+            return true
+        end
+    end
+    return false
+end
+
+local function ensurePeerInRaid(owner)
+    if not owner or owner == '' then return false end
+    if isOwnerInRaid(owner) then return true end
+    inviteToRaid(owner)
+    mq.delay(5000, function() return isOwnerInRaid(owner) end)
+    return isOwnerInRaid(owner)
+end
+
+local function waitForSpawnByName(name, timeoutMs)
+    local timeout = (timeoutMs or 8000) / 1000
+    local deadline = os.clock() + timeout
+    repeat
+        if isSpawned(name) then return true end
+        mq.delay(200)
+    until os.clock() >= deadline
+    return isSpawned(name)
+end
+
+local function partitionBots(botList)
+    local locals = {}
+    local remote = {}
+    for _, name in ipairs(botList) do
+        if name and name ~= '' then
+            if isLocalBot(name) then
+                table.insert(locals, name)
+            else
+                local owner = getBotOwner(name)
+                if owner and owner ~= '' then
+                    remote[owner] = remote[owner] or {}
+                    table.insert(remote[owner], name)
+                else
+                    table.insert(locals, name)
+                end
+            end
+        end
+    end
+    return locals, remote
+end
+
+local function inviteRemoteBots(remoteMap)
+    if not remoteMap then return 0 end
+    local totalInvited = 0
+    for owner, bots in pairs(remoteMap) do
+        if owner and connected_players and connected_players.is_connected and connected_players.is_connected(owner) then
+            if ensurePeerInRaid(owner) then
+                for _, botName in ipairs(bots) do
+                    if connected_players.request_remote_spawn then
+                        connected_players.request_remote_spawn(owner, {botName})
+                    end
+                    waitForSpawnByName(botName, 12000)
+                    if isSpawned(botName) then
+                        inviteToRaid(botName)
+                        mq.delay(100)
+                        totalInvited = totalInvited + 1
+                    else
+                        printf('[RaidManager] Timed out waiting for %s to spawn for raid.', botName)
+                    end
+                end
+            else
+                printf('[RaidManager] Peer %s is not in the raid. Invite them first to include their bots.', owner)
+            end
+        else
+            printf('[RaidManager] Peer %s not connected; skipping remote bots.', owner or 'unknown')
+        end
+    end
+    return totalInvited
 end
 
 local function getMyName()
@@ -287,7 +385,7 @@ local function assignFromNotInGroup(name, groupNum)
     return true
 end
 
-local function isSpawned(name)
+isSpawned = function(name)
     local s = mq.TLO.Spawn(string.format('=%s', name))
     return s and s() and s.ID() and s.ID() > 0
 end
@@ -299,7 +397,7 @@ local function spawnIfNeeded(name)
     return isSpawned(name)
 end
 
-local function inviteToRaid(name)
+inviteToRaid = function(name)
     mq.cmdf('/raidinvite %s', name)
     if M.live_pc_mode then
         -- If a confirmation dialog appears, click Yes.
@@ -332,14 +430,16 @@ function M.formRaidForSelected()
     if #bots == 0 then
         M.statusText = 'No bots selected.'; return
     end
+    local localBots, remoteBots = partitionBots(bots)
     openRaidWindow(); raidUnlock()
-    for _, n in ipairs(bots) do
+    for _, n in ipairs(localBots) do
         spawnIfNeeded(n)
         inviteToRaid(n)
         mq.delay(100)
     end
+    local remoteInvited = inviteRemoteBots(remoteBots)
     raidLock()
-    M.statusText = string.format('Invited %d bot(s) to raid.', #bots)
+    M.statusText = string.format('Invited %d local and %d remote bot(s) to raid.', #localBots, remoteInvited)
 end
 
 function M.applyLayout()
@@ -364,15 +464,17 @@ function M.formRaidFromLayout()
     if #bots == 0 then
         M.statusText = 'No bots in layout to invite.'; return
     end
+    local localBots, remoteBots = partitionBots(bots)
     openRaidWindow(); raidUnlock()
     -- spawn and invite quickly
-    for _, n in ipairs(bots) do
+    for _, n in ipairs(localBots) do
         if n ~= getMyName() then
             spawnIfNeeded(n)
             inviteToRaid(n)
             mq.delay(50)
         end
     end
+    local remoteInvited = inviteRemoteBots(remoteBots)
     raidLock()
 
     -- arrange with retries to allow NotInGroup to populate (Raid must be LOCKED for move buttons to work)
@@ -398,7 +500,7 @@ function M.formRaidFromLayout()
         end
     end
     raidUnlock()
-    M.statusText = string.format('Invited %d and arranged %d bot(s).', #bots, totalAssigned)
+    M.statusText = string.format('Invited %d local, %d remote and arranged %d bot(s).', #localBots, remoteInvited, totalAssigned)
 end
 
 -- UI
@@ -411,14 +513,6 @@ function M.draw_tab()
     if ImGui.Button('Auto-Fill From Selected Groups') then autofill() end
     ImGui.SameLine()
     if ImGui.Button('Clear Layout') then clearLayout() end
-    ImGui.SameLine()
-    local pcMode = M.live_pc_mode and true or false
-    local newPcMode = ImGui.Checkbox('Live PC Mode', pcMode)
-    M.live_pc_mode = newPcMode and true or false
-    if M.statusText ~= '' then
-        ImGui.SameLine()
-        ImGui.TextColored(0.6, 0.9, 0.6, 1.0, M.statusText)
-    end
 
     ImGui.Separator()
 
@@ -671,6 +765,15 @@ end
 function M.init()
     initLayout()
     M.load_saved_layouts()
+end
+
+function M.handle_remote_spawn_request(botList)
+    if not botList or type(botList) ~= 'table' then return end
+    for _, name in ipairs(botList) do
+        if name and name ~= '' and isLocalBot(name) then
+            spawnIfNeeded(name)
+        end
+    end
 end
 
 return M

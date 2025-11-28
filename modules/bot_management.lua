@@ -51,6 +51,17 @@ local function canonicalize_class(raw)
     return s
 end
 
+local function format_bot_name_with_owner(name)
+    if not name or name == '' then return '' end
+    if bot_inventory and bot_inventory.getBotOwner then
+        local owner = bot_inventory.getBotOwner(name)
+        if owner and owner ~= '' then
+            return string.format('%s [%s]', name, owner)
+        end
+    end
+    return name
+end
+
 -- Bot creation state
 M.showCreateDialog = false
 M.newBotName = ""
@@ -75,6 +86,7 @@ M.genders = {
 
 -- UI state: current class filter (nil = all)
 M.classFilter = nil
+M.displayScope = 'connected' -- 'local' or 'connected'
 
 -- Convert selections to numeric IDs for ^botcreate command
 -- Based on EverQuest class IDs
@@ -248,29 +260,32 @@ function M.draw()
     end
     ImGui.SameLine()
     if ImGui.Button('Spawn All##mgmt') then
-        local bots = bot_inventory.getAllBots() or {}
-        for _, name in ipairs(bots) do
+        local botsToUse = bot_inventory.getAllBots() or {}
+        for _, name in ipairs(botsToUse) do
             action_spawn(name)
         end
     end
     ImGui.SameLine()
     if ImGui.Button('Invite All##mgmt') then
-        local bots = bot_inventory.getAllBots() or {}
-        for _, name in ipairs(bots) do
+        local botsToUse = bot_inventory.getAllBots() or {}
+        for _, name in ipairs(botsToUse) do
             action_invite(name)
         end
     end
     ImGui.SameLine()
     if ImGui.Button('Camp All##mgmt') then
-        local bots = bot_inventory.getAllBots() or {}
-        for _, name in ipairs(bots) do
-            action_camp(name)
-        end
+        mq.cmd('/say ^botcamp all')
     end
 
     ImGui.Separator()
 
-    local bots = bot_inventory.getAllBots() or {}
+    local bots = {}
+    local scope = (M.displayScope == 'local') and 'local' or 'connected'
+    if bot_inventory and bot_inventory.getBotsByScope then
+        bots = bot_inventory.getBotsByScope(scope)
+    else
+        bots = bot_inventory.getAllBots() or {}
+    end
     -- Note: We continue even if bots list is empty, to show the create panel
 
     -- Build class counts from captured bot list metadata
@@ -307,6 +322,18 @@ function M.draw()
     -- Left pane: class counts (aligned two-column table)
     if ImGui.BeginChild('##BotMgmtClasses', leftW, 410, ImGuiChildFlags.Border) then
         ImGui.Text('Classes')
+        ImGui.SameLine()
+        ImGui.Text('Scope:')
+        ImGui.SameLine()
+        local localOnly = (M.displayScope == 'local')
+        if ImGui.RadioButton('Local##mgmt_scope', localOnly) then
+            M.displayScope = 'local'
+        end
+        ImGui.SameLine()
+        local connectedScope = not localOnly
+        if ImGui.RadioButton('All##mgmt_scope', connectedScope) then
+            M.displayScope = 'connected'
+        end
         ImGui.Separator()
         local shown = 0
         if ImGui.BeginTable('BotMgmtClassCounts', 2, ImGuiTableFlags.RowBg + ImGuiTableFlags.SizingFixedFit) then
@@ -374,7 +401,8 @@ function M.draw()
                 else
                     ImGui.PushStyleColor(ImGuiCol.Text, 0.8, 0.2, 0.2, 1.0)
                 end
-                if ImGui.Selectable(name, false) then
+                local displayName = format_bot_name_with_owner(name)
+                if ImGui.Selectable(displayName, false) then
                     target_bot(name)
                 end
                 ImGui.PopStyleColor(1)
