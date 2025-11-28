@@ -3,6 +3,8 @@
 
 local mq = require('mq')
 
+local table_unpack = table.unpack or unpack
+
 -- Lightweight logger for early bootstrap (before module debug is set)
 local function _pm_log(fmt, ...)
     -- Disabled by default; flip to true for troubleshooting
@@ -624,6 +626,57 @@ local function last_error()
         return M._db:errmsg()
     end
     return 'unknown sqlite error'
+end
+
+local function bind_owner_and_names(stmt, owner, botNames)
+    local binds = { owner }
+    if botNames then
+        for _, name in ipairs(botNames) do
+            table.insert(binds, name)
+        end
+    end
+    stmt:bind_values(table_unpack(binds))
+end
+
+local function delete_missing_bots(tableName, columnName, owner, botNames)
+    local query
+    if botNames and #botNames > 0 then
+        local placeholders = {}
+        for _ = 1, #botNames do table.insert(placeholders, '?') end
+        query = string.format('DELETE FROM %s WHERE owner = ? AND %s NOT IN (%s)',
+            tableName, columnName, table.concat(placeholders, ','))
+    else
+        query = string.format('DELETE FROM %s WHERE owner = ?', tableName)
+    end
+
+    local stmt = M._db:prepare(query)
+    if not stmt then
+        return false, last_error()
+    end
+    bind_owner_and_names(stmt, owner, botNames)
+    local rc = stmt:step()
+    stmt:finalize()
+    if rc ~= sqlite3.DONE then
+        return false, last_error()
+    end
+    return true
+end
+
+function M.prune_missing_bots(owner, botNames)
+    if not ok_sqlite then
+        return false, 'lsqlite3 not available'
+    end
+    if not M._db then
+        local ok, err = open_db()
+        if not ok then return false, err end
+    end
+
+    owner = owner or get_owner_name()
+    local ok1, err1 = delete_missing_bots('bot_equipment', 'bot_name', owner, botNames)
+    if not ok1 then return false, err1 end
+    local ok2, err2 = delete_missing_bots('bots', 'name', owner, botNames)
+    if not ok2 then return false, err2 end
+    return true
 end
 
 local function insert_item(botName, location, it)

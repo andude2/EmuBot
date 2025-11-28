@@ -155,6 +155,34 @@ local function resetStateForOwner(owner)
     BotInventory.active_capture_buffers = {}
 end
 
+local function pruneMissingBotRecords(validBots)
+    local validList = validBots or {}
+    local validSet = {}
+    for _, name in ipairs(validList) do
+        validSet[name] = true
+    end
+
+    local removedCache = 0
+    for botName in pairs(BotInventory.bot_inventories or {}) do
+        if not validSet[botName] then
+            BotInventory.bot_inventories[botName] = nil
+            removedCache = removedCache + 1
+        end
+    end
+
+    local owner = BotInventory._owner or resolveCurrentOwner()
+    if db and db.prune_missing_bots then
+        local ok, err = db.prune_missing_bots(owner, validList)
+        if not ok then
+            print(string.format('[BotInventory][DB] Failed to prune stale bots: %s', tostring(err)))
+        elseif removedCache > 0 then
+            print(string.format('[BotInventory] Removed %d stale bot(s) from cache after refresh', removedCache))
+        end
+    elseif removedCache > 0 then
+        print(string.format('[BotInventory] Removed %d stale bot(s) from cache after refresh', removedCache))
+    end
+end
+
 local function ensureBotInventoryRecord(botName)
     if not botName or botName == '' then return nil end
     local owner = BotInventory._owner or resolveCurrentOwner()
@@ -814,6 +842,7 @@ function BotInventory.processBotListResponse()
 
             --print(string.format("[BotInventory] Found %d bots: %s", #BotInventory.cached_bot_list, table.concat(BotInventory.cached_bot_list, ", ")))
             BotInventory.bot_list_start_time = nil
+            pruneMissingBotRecords(BotInventory.cached_bot_list)
         end
     end
 end

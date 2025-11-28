@@ -343,6 +343,25 @@ local function collectBotNames()
     return list, set
 end
 
+local function getCachedInventoryStats()
+    local totalItems = 0
+    local itemsWithLinks = 0
+    if not bot_inventory or not bot_inventory.bot_inventories then
+        return totalItems, itemsWithLinks
+    end
+
+    for _, record in pairs(bot_inventory.bot_inventories) do
+        for _, item in ipairs(record.equipped or {}) do
+            totalItems = totalItems + 1
+            if item.itemlink and item.itemlink ~= '' then
+                itemsWithLinks = itemsWithLinks + 1
+            end
+        end
+    end
+
+    return totalItems, itemsWithLinks
+end
+
 local function syncSelectedBotData()
     if not botUI.selectedBot or not botUI.selectedBot.name then return end
     if not bot_inventory or not bot_inventory.bot_inventories then return end
@@ -3412,19 +3431,36 @@ if ImGui.BeginTabBar('BotEquippedViewTabs', ImGuiTabBarFlags.Reorderable) then
         end
 
         ImGui.Spacing()
-        ImGui.Text(string.format('Items: %d', #equippedItems))
-        local withLinks = 0
-        local withoutLinks = 0
+        local selectedCount = #equippedItems
+        local selectedWithLinks = 0
         for _, item in ipairs(equippedItems or {}) do
             if item.itemlink and item.itemlink ~= '' then
-                withLinks = withLinks + 1
-            else
-                withoutLinks = withoutLinks + 1
+                selectedWithLinks = selectedWithLinks + 1
             end
         end
 
+        local displayCount = selectedCount
+        local displayWithLinks = selectedWithLinks
+        local usingCachedSummary = false
+        if displayCount == 0 then
+            local cachedItems, cachedLinks = getCachedInventoryStats()
+            displayCount = cachedItems
+            displayWithLinks = cachedLinks
+            usingCachedSummary = true
+        end
+
+        if usingCachedSummary then
+            ImGui.Text(string.format('Items (cached): %d', displayCount))
+        else
+            ImGui.Text(string.format('Items: %d', displayCount))
+        end
+
         ImGui.SameLine()
-        ImGui.Text(string.format('Links: %d/%d', withLinks, withLinks + withoutLinks))
+        if usingCachedSummary then
+            ImGui.Text(string.format('Links (cached): %d/%d', displayWithLinks, displayCount))
+        else
+            ImGui.Text(string.format('Links: %d/%d', displayWithLinks, displayCount))
+        end
     end
 
     -- Show the scan all confirmation popup
