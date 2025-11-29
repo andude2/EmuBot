@@ -114,6 +114,72 @@ local botUI = {
     lastPurgeMessage = nil,
     lastPurgeWasSuccess = false,
     _remoteRefreshCooldown = {},
+    -- Spell announce management
+    spellAnnounceTypes = {},
+    spellAnnounceStatuses = {},
+    spellAnnounceLoading = false,
+    spellAnnounceMessage = nil,
+}
+
+local SPELL_TYPE_DEFINITIONS = {
+    {id = 0, name = 'Nuke'},
+    {id = 1, name = 'Regular Heal'},
+    {id = 2, name = 'Root'},
+    {id = 3, name = 'Buff'},
+    {id = 4, name = 'Escape'},
+    {id = 5, name = 'Pet'},
+    {id = 6, name = 'Lifetap'},
+    {id = 7, name = 'Snare'},
+    {id = 8, name = 'Damage Over Time'},
+    {id = 9, name = 'Dispel'},
+    {id = 10, name = 'In-Combat Buff'},
+    {id = 11, name = 'Mesmerize'},
+    {id = 12, name = 'Charm'},
+    {id = 13, name = 'Slow'},
+    {id = 14, name = 'Debuff'},
+    {id = 15, name = 'Cure'},
+    {id = 16, name = 'Resurrect'},
+    {id = 17, name = 'Hate Reduction'},
+    {id = 18, name = 'In-Combat Buff Song'},
+    {id = 19, name = 'Out-of-Combat Buff Song'},
+    {id = 20, name = 'Pre-Combat Buff'},
+    {id = 21, name = 'Pre-Combat Buff Song'},
+    {id = 22, name = 'Fear'},
+    {id = 23, name = 'Stun'},
+    {id = 24, name = 'Hate Line'},
+    {id = 25, name = 'Group Cures'},
+    {id = 26, name = 'Complete Heal'},
+    {id = 27, name = 'Fast Heals'},
+    {id = 28, name = 'Very Fast Heals'},
+    {id = 29, name = 'Group Heals'},
+    {id = 30, name = 'Group Complete Heals'},
+    {id = 31, name = 'Group Heal Over Time Heals'},
+    {id = 32, name = 'Heal Over Time Heals'},
+    {id = 33, name = 'AE Nukes'},
+    {id = 34, name = 'AE Rains'},
+    {id = 35, name = 'AE Mesmerize'},
+    {id = 36, name = 'AE Stun'},
+    {id = 37, name = 'AE Debuff'},
+    {id = 38, name = 'AE Slow'},
+    {id = 39, name = 'AE Snare'},
+    {id = 40, name = 'AE Fear'},
+    {id = 41, name = 'AE Dispel'},
+    {id = 42, name = 'AE Root'},
+    {id = 43, name = 'AE Damage Over Time'},
+    {id = 44, name = 'AE Lifetap'},
+    {id = 45, name = 'AE Hate Line'},
+    {id = 46, name = 'Point Blank AE Nuke'},
+    {id = 47, name = 'Pet Buffs'},
+    {id = 48, name = 'Pet Regular Heals'},
+    {id = 49, name = 'Pet Complete Heals'},
+    {id = 50, name = 'Pet Fast Heals'},
+    {id = 51, name = 'Pet Very Fast Heals'},
+    {id = 52, name = 'Pet Heal Over Time Heals'},
+    {id = 53, name = 'Pet Cures'},
+    {id = 54, name = 'Damage Shields'},
+    {id = 55, name = 'Resist Buffs'},
+    {id = 56, name = 'Pet Damage Shields'},
+    {id = 57, name = 'Pet Resist Buffs'},
 }
 
 if upgrade and upgrade.set_close_window_on_swap then
@@ -234,6 +300,59 @@ local function captureAugmentData(target)
     end
 
     return success
+end
+
+local function refreshSpellTypeIds()
+    if botUI.spellAnnounceLoading then return end
+    botUI.spellAnnounceLoading = true
+    botUI.spellAnnounceMessage = 'Loading spell type definitions...'
+
+    botUI.spellAnnounceTypes = {}
+    for _, entry in ipairs(SPELL_TYPE_DEFINITIONS) do
+        table.insert(botUI.spellAnnounceTypes, { id = entry.id, name = entry.name })
+    end
+
+    botUI.spellAnnounceLoading = false
+    botUI.spellAnnounceMessage = string.format('Loaded %d spell type entries.', #botUI.spellAnnounceTypes)
+end
+
+local function findSpellTypeName(typeId)
+    for _, entry in ipairs(botUI.spellAnnounceTypes or {}) do
+        if entry.id == typeId then return entry.name end
+    end
+    return nil
+end
+
+local function setSpellAnnounceState(typeId, enabled, silent)
+    if not typeId then return end
+    botUI.spellAnnounceStatuses = botUI.spellAnnounceStatuses or {}
+    botUI.spellAnnounceStatuses[typeId] = enabled and true or false
+    mq.cmdf('/say ^spellannouncecasts %d %d spawned', tonumber(typeId) or 0, enabled and 1 or 0)
+    if not silent then
+        local label = findSpellTypeName(typeId) or string.format('Type %d', tonumber(typeId) or 0)
+        botUI.spellAnnounceMessage = string.format('%s spell announce for %s', enabled and 'Enabled' or 'Disabled', label)
+    end
+end
+
+local function bulkSetSpellAnnounceState(enable)
+    if not botUI.spellAnnounceTypes or #botUI.spellAnnounceTypes == 0 then
+        botUI.spellAnnounceMessage = 'Load spell types before attempting bulk updates.'
+        return
+    end
+
+    local verb = enable and 'Enabling' or 'Disabling'
+    botUI.spellAnnounceMessage = string.format('%s spell announcements for %d type(s)...', verb, #botUI.spellAnnounceTypes)
+    enqueueTask(function()
+        local count = 0
+        for _, entry in ipairs(botUI.spellAnnounceTypes) do
+            if entry.id then
+                setSpellAnnounceState(entry.id, enable, true)
+                count = count + 1
+                mq.delay(10)
+            end
+        end
+        botUI.spellAnnounceMessage = string.format('%s spell announcements for %d type(s).', enable and 'Enabled' or 'Disabled', count)
+    end)
 end
 
 local function getDisplayItemNumber(accessor)
@@ -1363,6 +1482,86 @@ function botUI.getSkippedBots()
     table.sort(skipped, function(a, b) return a.remaining > b.remaining end)
     
     return skipped
+end
+
+function botUI.drawSpellAnnounceTab()
+    ImGui.TextWrapped('Manage ^spellannouncecasts for all spawned bots. Toggle spell types below to control which casts are announced.')
+
+    botUI.spellAnnounceStatuses = botUI.spellAnnounceStatuses or {}
+
+    if ImGui.Button('Enable All##SpellAnnounceAllOn') then
+        bulkSetSpellAnnounceState(true)
+    end
+    if ImGui.IsItemHovered() then
+        ImGui.SetTooltip('Sends ^spellannouncecasts <type> 1 spawned for each spell type')
+    end
+
+    ImGui.SameLine()
+    if ImGui.Button('Disable All##SpellAnnounceAllOff') then
+        bulkSetSpellAnnounceState(false)
+    end
+    if ImGui.IsItemHovered() then
+        ImGui.SetTooltip('Sends ^spellannouncecasts <type> 0 spawned for each spell type')
+    end
+
+    ImGui.SameLine()
+    if ImGui.Button('Clear Local State##SpellAnnounceClear') then
+        botUI.spellAnnounceStatuses = {}
+        botUI.spellAnnounceMessage = 'Cleared local checkbox states (actual bot settings unchanged).'
+    end
+
+    if botUI.spellAnnounceMessage and botUI.spellAnnounceMessage ~= '' then
+        ImGui.TextWrapped(botUI.spellAnnounceMessage)
+    end
+
+    local spellTypes = botUI.spellAnnounceTypes or {}
+    if #spellTypes == 0 then
+        ImGui.Spacing()
+        if botUI.spellAnnounceLoading then
+            ImGui.TextColored(0.9, 0.8, 0.2, 1.0, 'Loading spell types...')
+        else
+            ImGui.Text('No spell type data available yet.')
+        end
+        return
+    end
+
+    if ImGui.BeginTable('SpellAnnounceTable', 3,
+            ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
+        ImGui.TableSetupColumn('ID', ImGuiTableColumnFlags.WidthFixed, 60)
+        ImGui.TableSetupColumn('Spell Type', ImGuiTableColumnFlags.WidthStretch)
+        ImGui.TableSetupColumn('Announce', ImGuiTableColumnFlags.WidthFixed, 120)
+        ImGui.TableHeadersRow()
+
+        local sortSpecs = ImGui.TableGetSortSpecs()
+        applyTableSort(spellTypes, sortSpecs, {
+            [1] = function(row) return row.id or 0 end,
+            [2] = function(row) return (row.name or ''):lower() end,
+        })
+
+        for _, entry in ipairs(spellTypes) do
+            ImGui.TableNextRow()
+
+            ImGui.TableNextColumn()
+            ImGui.Text(tostring(entry.id or ''))
+
+            ImGui.TableNextColumn()
+            ImGui.Text(entry.name or 'Unknown')
+
+            ImGui.TableNextColumn()
+            local current = botUI.spellAnnounceStatuses[entry.id] and true or false
+            local checkboxLabel = string.format('##SpellAnnounce_%d', entry.id or 0)
+            local newValue, changed = ImGui.Checkbox(checkboxLabel, current)
+            if changed then
+                setSpellAnnounceState(entry.id, newValue, false)
+            end
+            if ImGui.IsItemHovered() then
+                ImGui.SetTooltip(string.format('Current state: %s (click to toggle ^spellannouncecasts %d)',
+                    newValue and 'Enabled' or 'Disabled', entry.id or 0))
+            end
+        end
+
+        ImGui.EndTable()
+    end
 end
 
 local function getSlotNameFromID(slotID)
@@ -3531,6 +3730,11 @@ if ImGui.BeginTabBar('BotEquippedViewTabs', ImGuiTabBarFlags.Reorderable) then
                 ImGui.EndTabItem()
             end
 
+            if ImGui.BeginTabItem('Spell Announce') then
+                botUI.drawSpellAnnounceTab()
+                ImGui.EndTabItem()
+            end
+
             ImGui.EndTabBar()
         end
 
@@ -3941,6 +4145,7 @@ local function main()
 
     -- Kick off a bot list refresh on startup so the dropdown populates.
     refreshBotList()
+    refreshSpellTypeIds()
 
     -- Initialize optional modules
     if bot_groups and bot_groups.init then bot_groups.init() end
