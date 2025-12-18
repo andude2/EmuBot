@@ -37,6 +37,23 @@ local slotNames = {
     [20] = 'Waist', [21] = 'Power Source', [22] = 'Ammo',
 }
 
+local function get_main_char_name()
+    local me = mq.TLO.Me
+    if not me then return nil end
+    local okClean, clean = pcall(function() return me.CleanName() end)
+    if okClean and clean and clean ~= '' then return tostring(clean) end
+    local okName, name = pcall(function() return me.Name() end)
+    if okName and name and name ~= '' then return tostring(name) end
+    return nil
+end
+
+local function is_main_char_name(name)
+    if not name or name == '' then return false end
+    local myName = get_main_char_name()
+    if not myName or myName == '' then return false end
+    return tostring(name):lower() == tostring(myName):lower()
+end
+
 local classMap = {
     ["WAR"] = "WARRIOR",
     ["CLR"] = "CLERIC",
@@ -123,6 +140,10 @@ local function clear_candidates()
 end
 
 local function add_candidate(c)
+    if not c then return end
+    if not c.isMainChar and is_main_char_name(c.bot) then
+        return
+    end
     U._candidates[#U._candidates + 1] = c
 end
 
@@ -149,6 +170,31 @@ local function process_pending_refreshes()
     end
 end
 
+-- Helper function to add main character to candidates list
+local function add_main_char_candidates()
+    local cur = mq.TLO.Cursor
+    if not cur() then return 0 end
+    
+    local itemName = cur.Name() or 'Unknown Item'
+    local itemID = tonumber(cur.ID() or 0) or 0
+    local slotIDs = get_worn_slot_ids(cur)
+    if #slotIDs == 0 then return 0 end
+    
+    local myName = get_main_char_name() or 'Me'
+    local myClass = mq.TLO.Me.Class.ShortName() or 'UNK'
+    local classOK = can_item_be_used_by_class(cur, myClass)
+    local count = 0
+    if classOK then
+        for _, sid in ipairs(slotIDs) do
+            local slotName = slotNames[sid] or ('Slot ' .. tostring(sid))
+            local classAbbrev = extract_class_abbreviation(myClass)
+            add_candidate({ bot = myName, class = classAbbrev, slotid = sid, slotname = slotName, itemID = itemID, itemName = itemName, isMainChar = true })
+            count = count + 1
+        end
+    end
+    return count
+end
+
 local function compute_local_candidates_from_cursor()
     clear_candidates()
     local cur = mq.TLO.Cursor
@@ -163,6 +209,11 @@ local function compute_local_candidates_from_cursor()
         printf('[EmuBot] Cursor item has no wearable slots.')
         return 0
     end
+    
+    -- Add the main character (yourself) to the comparison
+    add_main_char_candidates()
+    
+    -- Add bots to the comparison
     local bots = bot_inventory.getAllBots() or {}
     for _, botName in ipairs(bots) do
         local meta = bot_inventory.bot_list_capture_set and bot_inventory.bot_list_capture_set[botName]
@@ -172,7 +223,7 @@ local function compute_local_candidates_from_cursor()
             for _, sid in ipairs(slotIDs) do
                 local slotName = slotNames[sid] or ('Slot ' .. tostring(sid))
                 local classAbbrev = extract_class_abbreviation(botClass)
-                add_candidate({ bot = botName, class = classAbbrev, slotid = sid, slotname = slotName, itemID = itemID, itemName = itemName })
+                add_candidate({ bot = botName, class = classAbbrev, slotid = sid, slotname = slotName, itemID = itemID, itemName = itemName, isMainChar = false })
             end
         end
     end
@@ -329,6 +380,8 @@ function U.poll_iu()
         printf('[EmuBot] Put the upgrade item on your cursor before polling.')
         return
     end
+    -- Add main character to comparison first
+    add_main_char_candidates()
     printf('[EmuBot] Polling bots with ^iu ...')
     U._show_compare = true
     mq.cmd('/say ^iu')
@@ -455,12 +508,38 @@ function U.draw_tab()
     local upgAC, upgHP, upgMana = get_cursor_stats()
     local upgDamage, upgDelay = get_cursor_weapon_stats()
 
-    local displayRows = {}
-    for _, row in ipairs(U._candidates or {}) do
+    -- Helper function to build display row data
+    local function build_display_row(row)
         local curItem = nil
         local cAC, cHP, cMana = 0, 0, 0
         local cDamage, cDelay = 0, 0
-        if bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
+        
+        -- Check if this is the main character
+        if row.isMainChar then
+            -- Get equipped item stats from main character
+            local equippedItem = mq.TLO.Me.Inventory(row.slotid)
+            if equippedItem and equippedItem() then
+                cAC = tonumber(equippedItem.AC() or 0) or 0
+                cHP = tonumber(equippedItem.HP() or 0) or 0
+                cMana = tonumber(equippedItem.Mana() or 0) or 0
+                
+                if isWeapon then
+                    local isCurrentWeapon = is_weapon_type(equippedItem.Type())
+                    if isCurrentWeapon then
+                        cDamage = tonumber(equippedItem.Damage() or 0) or 0
+                        cDelay = tonumber(equippedItem.ItemDelay() or 0) or 0
+                    end
+                end
+                
+                -- Create a minimal curItem structure for display consistency
+                curItem = {
+                    name = equippedItem.Name() or '',
+                    ac = cAC,
+                    hp = cHP,
+                    mana = cMana
+                }
+            end
+        elseif bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
             curItem = bot_inventory.getBotEquippedItem(row.bot, row.slotid)
             cAC = tonumber(curItem and curItem.ac or 0) or 0
             cHP = tonumber(curItem and curItem.hp or 0) or 0
@@ -478,7 +557,7 @@ function U.draw_tab()
             end
         end
 
-        table.insert(displayRows, {
+        return {
             ref = row,
             slotname = row.slotname or ('Slot ' .. tostring(row.slotid or '?')),
             current = curItem,
@@ -487,73 +566,59 @@ function U.draw_tab()
             deltaMana = (upgMana or 0) - cMana,
             deltaDamage = (upgDamage or 0) - cDamage,
             deltaDelay = (upgDelay or 0) - cDelay,
-        })
+        }
     end
 
-    if ImGui.BeginTable('EmuBotUpgradeTable', numCols,
-            ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
-        ImGui.TableSetupColumn('Bot', ImGuiTableColumnFlags.WidthFixed, 120)
-        ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
-        ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
-        
-        -- Add weapon columns if this is a weapon
-        if isWeapon then
-            ImGui.TableSetupColumn('Dmg', ImGuiTableColumnFlags.WidthFixed, 60)
-            ImGui.TableSetupColumn('Delay', ImGuiTableColumnFlags.WidthFixed, 70)
+    -- Helper function to render table rows
+    local function render_table_rows(rows, startIndex)
+        -- Define color functions inside to avoid redefinition
+        local function color_damage(delta)
+            delta = delta or 0
+            if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
+            elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
+            else ImGui.Text('0') end
         end
-        
-        ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
-        ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
-        ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
-        ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 120)
-        ImGui.TableHeadersRow()
-
-        local sortAccessors
-        if isWeapon then
-            sortAccessors = {
-                [1] = function(entry) return entry.ref.bot or '' end,
-                [2] = function(entry) return entry.ref.class or '' end,
-                [3] = function(entry) return entry.slotname or '' end,
-                [4] = function(entry) return entry.deltaDamage or 0 end,
-                [5] = function(entry) return entry.deltaDelay or 0 end,
-                [6] = function(entry) return entry.deltaAC or 0 end,
-                [7] = function(entry) return entry.deltaHP or 0 end,
-                [8] = function(entry) return entry.deltaMana or 0 end,
-            }
-        else
-            sortAccessors = {
-                [1] = function(entry) return entry.ref.bot or '' end,
-                [2] = function(entry) return entry.ref.class or '' end,
-                [3] = function(entry) return entry.slotname or '' end,
-                [4] = function(entry) return entry.deltaAC or 0 end,
-                [5] = function(entry) return entry.deltaHP or 0 end,
-                [6] = function(entry) return entry.deltaMana or 0 end,
-            }
+        local function color_delay(delta)
+            delta = delta or 0
+            if delta < 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
+            elseif delta > 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, '+' .. tostring(delta))
+            else ImGui.Text('0') end
         end
-        applyTableSort(displayRows, ImGui.TableGetSortSpecs(), sortAccessors)
+        local function colortext(delta)
+            delta = delta or 0
+            if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
+            elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
+            else ImGui.Text('0') end
+        end
 
-        for i, entry in ipairs(displayRows) do
+        for i, entry in ipairs(rows) do
             local row = entry.ref
             ImGui.TableNextRow()
-            ImGui.PushID('upg_' .. tostring(i))
+            ImGui.PushID('upg_' .. tostring(startIndex + i))
 
             ImGui.TableNextColumn()
-            if ImGui.Selectable((row.bot or 'Unknown') .. '##maintarget_' .. tostring(i), false, ImGuiSelectableFlags.None) then
-                -- Target the bot when clicked
-                local botName = row.bot
-                if botName then
-                    local s = mq.TLO.Spawn(string.format('= %s', botName))
-                    if s and s.ID and s.ID() and s.ID() > 0 then
-                        mq.cmdf('/target id %d', s.ID())
-                        printf('[EmuBot] Targeting %s', botName)
-                    else
-                        mq.cmdf('/target "%s"', botName)
-                        printf('[EmuBot] Attempting to target %s', botName)
+            if ImGui.Selectable((row.bot or 'Unknown') .. '##maintarget_' .. tostring(startIndex + i), false, ImGuiSelectableFlags.None) then
+                -- Target the bot when clicked (skip for main char)
+                if not row.isMainChar then
+                    local botName = row.bot
+                    if botName then
+                        local s = mq.TLO.Spawn(string.format('= %s', botName))
+                        if s and s.ID and s.ID() and s.ID() > 0 then
+                            mq.cmdf('/target id %d', s.ID())
+                            printf('[EmuBot] Targeting %s', botName)
+                        else
+                            mq.cmdf('/target "%s"', botName)
+                            printf('[EmuBot] Attempting to target %s', botName)
+                        end
                     end
                 end
             end
             if ImGui.IsItemHovered() then
-                ImGui.SetTooltip('Click to target ' .. (row.bot or 'bot'))
+                if row.isMainChar then
+                    ImGui.SetTooltip('This is you')
+                else
+                    ImGui.SetTooltip('Click to target ' .. (row.bot or 'bot'))
+                end
             end
 
             ImGui.TableNextColumn()
@@ -563,58 +628,133 @@ function U.draw_tab()
             ImGui.Text(entry.slotname)
 
             -- Weapon deltas (colored) - only if weapon
-        if isWeapon then
-            -- For weapon Damage: higher is better (green on positive)
-            local function color_damage(delta)
-                delta = delta or 0
-                if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
-                elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
-                else ImGui.Text('0') end
-            end
-            -- For weapon Delay: LOWER is better, so invert colors
-            local function color_delay(delta)
-                delta = delta or 0
-                if delta < 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
-                elseif delta > 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, '+' .. tostring(delta))
-                else ImGui.Text('0') end
-            end
-
+            if isWeapon then
                 ImGui.TableNextColumn(); color_damage(entry.deltaDamage)
                 ImGui.TableNextColumn(); color_delay(entry.deltaDelay)
             end
 
             -- Other deltas (colored)
-            local function colortext(delta)
-                delta = delta or 0
-                if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
-                elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
-                else ImGui.Text('0') end
-            end
-
             ImGui.TableNextColumn(); colortext(entry.deltaAC)
             ImGui.TableNextColumn(); colortext(entry.deltaHP)
             ImGui.TableNextColumn(); colortext(entry.deltaMana)
 
             ImGui.TableNextColumn()
-            if ImGui.SmallButton('Swap') then
-                local ok = swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
-                if ok then
-                    for idx, candidate in ipairs(U._candidates) do
-                        if candidate == row then
-                            table.remove(U._candidates, idx)
-                            break
+            if row.isMainChar then
+                -- Show disabled button for main character
+                ImGui.BeginDisabled()
+                ImGui.SmallButton('Swap')
+                ImGui.EndDisabled()
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip('This is your character - already holding the cursor item')
+                end
+            else
+                if ImGui.SmallButton('Swap') then
+                    local ok = swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
+                    if ok then
+                        for idx, candidate in ipairs(U._candidates) do
+                            if candidate == row then
+                                table.remove(U._candidates, idx)
+                                break
+                            end
                         end
                     end
                 end
-            end
-            if ImGui.IsItemHovered() then
-                ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
+                end
             end
 
             ImGui.PopID()
         end
+    end
 
-        ImGui.EndTable()
+    -- Separate main character rows from bot rows
+    local mainCharRows = {}
+    local botRows = {}
+    for _, row in ipairs(U._candidates or {}) do
+        local displayRow = build_display_row(row)
+        if row.isMainChar then
+            table.insert(mainCharRows, displayRow)
+        else
+            table.insert(botRows, displayRow)
+        end
+    end
+
+    -- Display main character table first (if any)
+    if #mainCharRows > 0 then
+        ImGui.TextColored(0.9, 0.8, 0.2, 1.0, 'Your Character:')
+        if ImGui.BeginTable('EmuBotUpgradeTableMainChar', numCols,
+                ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+            ImGui.TableSetupColumn('Character', ImGuiTableColumnFlags.WidthFixed, 120)
+            ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
+            
+            if isWeapon then
+                ImGui.TableSetupColumn('Dmg', ImGuiTableColumnFlags.WidthFixed, 60)
+                ImGui.TableSetupColumn('Delay', ImGuiTableColumnFlags.WidthFixed, 70)
+            end
+            
+            ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
+            ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 120)
+            ImGui.TableHeadersRow()
+
+            render_table_rows(mainCharRows, 0)
+            ImGui.EndTable()
+        end
+        ImGui.Spacing()
+    end
+
+    -- Display bot table (if any)
+    if #botRows > 0 then
+        if #mainCharRows > 0 then
+            ImGui.TextColored(0.7, 0.9, 1.0, 1.0, 'Bots:')
+        end
+        if ImGui.BeginTable('EmuBotUpgradeTableBots', numCols,
+                ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
+            ImGui.TableSetupColumn('Bot', ImGuiTableColumnFlags.WidthFixed, 120)
+            ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
+            
+            if isWeapon then
+                ImGui.TableSetupColumn('Dmg', ImGuiTableColumnFlags.WidthFixed, 60)
+                ImGui.TableSetupColumn('Delay', ImGuiTableColumnFlags.WidthFixed, 70)
+            end
+            
+            ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
+            ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
+            ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 120)
+            ImGui.TableHeadersRow()
+
+            local sortAccessors
+            if isWeapon then
+                sortAccessors = {
+                    [1] = function(entry) return entry.ref.bot or '' end,
+                    [2] = function(entry) return entry.ref.class or '' end,
+                    [3] = function(entry) return entry.slotname or '' end,
+                    [4] = function(entry) return entry.deltaDamage or 0 end,
+                    [5] = function(entry) return entry.deltaDelay or 0 end,
+                    [6] = function(entry) return entry.deltaAC or 0 end,
+                    [7] = function(entry) return entry.deltaHP or 0 end,
+                    [8] = function(entry) return entry.deltaMana or 0 end,
+                }
+            else
+                sortAccessors = {
+                    [1] = function(entry) return entry.ref.bot or '' end,
+                    [2] = function(entry) return entry.ref.class or '' end,
+                    [3] = function(entry) return entry.slotname or '' end,
+                    [4] = function(entry) return entry.deltaAC or 0 end,
+                    [5] = function(entry) return entry.deltaHP or 0 end,
+                    [6] = function(entry) return entry.deltaMana or 0 end,
+                }
+            end
+            applyTableSort(botRows, ImGui.TableGetSortSpecs(), sortAccessors)
+
+            render_table_rows(botRows, #mainCharRows)
+            ImGui.EndTable()
+        end
     end
 
     if U._show_compare then U.draw_compare_window() end
@@ -643,6 +783,9 @@ local function slot_from_phrase(phrase)
 end
 
 local function on_iu_basic(line, name, slotPhrase)
+    -- Skip if this is the main character (we add them separately)
+    if is_main_char_name(name) then return end
+    
     local itemID = tonumber(mq.TLO.Cursor.ID() or 0) or 0
     local itemName = mq.TLO.Cursor.Name() or 'Item'
     local sid, sname = slot_from_phrase(slotPhrase)
@@ -655,7 +798,7 @@ local function on_iu_basic(line, name, slotPhrase)
     end
     local classAbbrev = extract_class_abbreviation(botClass)
     
-    add_candidate({ bot = name, class = classAbbrev, slotid = sid, slotname = sname, itemID = itemID, itemName = itemName })
+    add_candidate({ bot = name, class = classAbbrev, slotid = sid, slotname = sname, itemID = itemID, itemName = itemName, isMainChar = false })
     U._show_compare = true
 end
 
@@ -721,19 +864,53 @@ function U.draw_compare_window()
     local compareRows = {}
     for _, row in ipairs(U._candidates or {}) do
         local curItem = nil
-        if bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
+        local cAC, cHP, cMana, cDamage, cDelay = 0, 0, 0, 0, 0
+
+        if row.isMainChar then
+            local equippedItem = nil
+            if row.slotid ~= nil then
+                equippedItem = mq.TLO.Me.Inventory(row.slotid)
+            end
+            if equippedItem and equippedItem() then
+                cAC = tonumber(equippedItem.AC() or 0) or 0
+                cHP = tonumber(equippedItem.HP() or 0) or 0
+                cMana = tonumber(equippedItem.Mana() or 0) or 0
+                cDamage = tonumber(equippedItem.Damage() or 0) or 0
+                cDelay = tonumber(equippedItem.ItemDelay() or 0) or 0
+
+                local clickable, raw = nil, nil
+                if equippedItem.ItemLink then
+                    local okClickable, linkClickable = pcall(function() return equippedItem.ItemLink('CLICKABLE')() end)
+                    if okClickable and linkClickable and linkClickable ~= '' then clickable = linkClickable end
+                    local okRaw, linkRaw = pcall(function() return equippedItem.ItemLink('RAW')() end)
+                    if okRaw and linkRaw and linkRaw ~= '' then raw = linkRaw end
+                end
+
+                curItem = {
+                    name = equippedItem.Name() or '',
+                    ac = cAC,
+                    hp = cHP,
+                    mana = cMana,
+                    damage = cDamage,
+                    delay = cDelay,
+                    itemlink = clickable,
+                    itemlink_raw = raw,
+                }
+            end
+        elseif bot_inventory and bot_inventory.getBotEquippedItem and row.bot and row.slotid ~= nil then
             curItem = bot_inventory.getBotEquippedItem(row.bot, row.slotid)
-        end
-        local cAC = tonumber(curItem and curItem.ac or 0) or 0
-        local cHP = tonumber(curItem and curItem.hp or 0) or 0
-        local cMana = tonumber(curItem and curItem.mana or 0) or 0
-        local cDamage = tonumber(curItem and curItem.damage or 0) or 0
-        local cDelay = tonumber(curItem and curItem.delay or 0) or 0
-        if isWeapon and curItem and curItem.name and (cDamage == 0 and cDelay == 0) then
-            local currentItemTLO = mq.TLO.FindItem(string.format('= %s', curItem.name or ''))
-            if currentItemTLO and currentItemTLO() then
-                cDamage = tonumber(currentItemTLO.Damage() or 0) or 0
-                cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
+            cAC = tonumber(curItem and curItem.ac or 0) or 0
+            cHP = tonumber(curItem and curItem.hp or 0) or 0
+            cMana = tonumber(curItem and curItem.mana or 0) or 0
+            cDamage = tonumber(curItem and curItem.damage or 0) or 0
+            cDelay = tonumber(curItem and curItem.delay or 0) or 0
+
+            if isWeapon and curItem and curItem.name and (cDamage == 0 and cDelay == 0) then
+                local currentItemTLO = mq.TLO.FindItem(string.format('= %s', curItem.name or ''))
+                if currentItemTLO and currentItemTLO() then
+                    cDamage = tonumber(currentItemTLO.Damage() or 0) or 0
+                    cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
+                end
             end
         end
         table.insert(compareRows, {
@@ -749,54 +926,84 @@ function U.draw_compare_window()
         })
     end
 
-    local closeAfterSwap = false
-    if ImGui.BeginTable('EmuBotUpgradeCompare', numCols,
-            ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
-        applyTableSort(compareRows, ImGui.TableGetSortSpecs(), {
-            [1] = function(entry) return entry.ref.bot or '' end,
-            [2] = function(entry) return entry.ref.class or '' end,
-            [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
-            [4] = function(entry)
-                return entry.stats.item and entry.stats.item.name or ''
-            end,
-            [5] = isWeapon and function(entry)
-                return (upgDamage or 0) - (entry.stats.damage or 0)
-            end or nil,
-            [6] = isWeapon and function(entry)
-                return (upgDelay or 0) - (entry.stats.delay or 0)
-            end or nil,
-            [isWeapon and 7 or 5] = function(entry)
-                return (upgAC or 0) - (entry.stats.ac or 0)
-            end,
-            [isWeapon and 8 or 6] = function(entry)
-                return (upgHP or 0) - (entry.stats.hp or 0)
-            end,
-            [isWeapon and 9 or 7] = function(entry)
-                return (upgMana or 0) - (entry.stats.mana or 0)
-            end,
-        })
-        ImGui.TableSetupColumn('Bot', ImGuiTableColumnFlags.WidthFixed, 120)
+    local compareMainRows, compareBotRows = {}, {}
+    for _, entry in ipairs(compareRows) do
+        if entry.ref.isMainChar then
+            table.insert(compareMainRows, entry)
+        else
+            table.insert(compareBotRows, entry)
+        end
+    end
+
+    local function setup_compare_columns()
+        ImGui.TableSetupColumn('Character', ImGuiTableColumnFlags.WidthFixed, 120)
         ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
         ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
         ImGui.TableSetupColumn('Current', ImGuiTableColumnFlags.WidthStretch)
-        
-        -- Add weapon columns if this is a weapon
         if isWeapon then
             ImGui.TableSetupColumn('Dmg', ImGuiTableColumnFlags.WidthFixed, 60)
             ImGui.TableSetupColumn('Delay', ImGuiTableColumnFlags.WidthFixed, 70)
         end
-        
         ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
         ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
         ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
         ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 90)
         ImGui.TableHeadersRow()
+    end
 
-        for i, entry in ipairs(compareRows) do
+    local function sort_specs(rows)
+        if not rows or #rows == 0 then return end
+        local specs = ImGui.TableGetSortSpecs()
+        if not specs or not specs.SpecsCount or specs.SpecsCount == 0 then return end
+        if isWeapon then
+            applyTableSort(rows, specs, {
+                [1] = function(entry) return entry.ref.bot or '' end,
+                [2] = function(entry) return entry.ref.class or '' end,
+                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
+                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
+                [5] = function(entry) return (upgDamage or 0) - (entry.stats.damage or 0) end,
+                [6] = function(entry) return (upgDelay or 0) - (entry.stats.delay or 0) end,
+                [7] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
+                [8] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
+                [9] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
+            })
+        else
+            applyTableSort(rows, specs, {
+                [1] = function(entry) return entry.ref.bot or '' end,
+                [2] = function(entry) return entry.ref.class or '' end,
+                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
+                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
+                [5] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
+                [6] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
+                [7] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
+            })
+        end
+    end
+
+    local closeAfterSwap = false
+
+    local function render_compare_rows(rows, idPrefix)
+        local function color_damage(delta)
+            if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
+            elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
+            else ImGui.Text('0') end
+        end
+        local function color_delay(delta)
+            if delta < 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
+            elseif delta > 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, '+' .. tostring(delta))
+            else ImGui.Text('0') end
+        end
+        local function colortext(delta)
+            if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
+            elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
+            else ImGui.Text('0') end
+        end
+
+        for i, entry in ipairs(rows) do
             local row = entry.ref
             local stats = entry.stats
             ImGui.TableNextRow()
-            ImGui.PushID('cmp_' .. tostring(i))
+            ImGui.PushID(string.format('%s_%d', idPrefix, i))
 
             local curItem = stats.item
             local dAC = (upgAC or 0) - (stats.ac or 0)
@@ -806,101 +1013,120 @@ function U.draw_compare_window()
             local dDelay = (upgDelay or 0) - (stats.delay or 0)
 
             ImGui.TableNextColumn()
-            if ImGui.Selectable((row.bot or 'Unknown') .. '##target_' .. tostring(i), false, ImGuiSelectableFlags.None) then
-                -- Target the bot when clicked
-                local botName = row.bot
-                if botName then
-                    local s = mq.TLO.Spawn(string.format('= %s', botName))
-                    if s and s.ID and s.ID() and s.ID() > 0 then
-                        mq.cmdf('/target id %d', s.ID())
-                        printf('[EmuBot] Targeting %s', botName)
-                    else
-                        mq.cmdf('/target "%s"', botName)
-                        printf('[EmuBot] Attempting to target %s', botName)
+            local selectableLabel = (row.bot or 'Unknown') .. '##target_' .. string.format('%s_%d', idPrefix, i)
+            if ImGui.Selectable(selectableLabel, false, ImGuiSelectableFlags.None) then
+                if not row.isMainChar then
+                    local botName = row.bot
+                    if botName then
+                        local s = mq.TLO.Spawn(string.format('= %s', botName))
+                        if s and s.ID and s.ID() and s.ID() > 0 then
+                            mq.cmdf('/target id %d', s.ID())
+                            printf('[EmuBot] Targeting %s', botName)
+                        else
+                            mq.cmdf('/target "%s"', botName)
+                            printf('[EmuBot] Attempting to target %s', botName)
+                        end
                     end
                 end
             end
             if ImGui.IsItemHovered() then
-                ImGui.SetTooltip('Click to target ' .. (row.bot or 'bot'))
+                if row.isMainChar then
+                    ImGui.SetTooltip('This is you')
+                else
+                    ImGui.SetTooltip('Click to target ' .. (row.bot or 'bot'))
+                end
             end
+
             ImGui.TableNextColumn(); ImGui.Text(row.class or 'UNK')
             ImGui.TableNextColumn(); ImGui.Text(row.slotname or ('Slot ' .. tostring(row.slotid or '?')))
 
-            -- Current (name with clickable link)
             ImGui.TableNextColumn()
             if curItem and curItem.name and curItem.name ~= '' then
-                -- Create a link to the current item if we have itemlink data
                 if curItem.itemlink and curItem.itemlink ~= '' then
                     local links = mq.ExtractLinks(curItem.itemlink)
                     if links and #links > 0 then
                         if ImGui.Selectable(curItem.name, false, ImGuiSelectableFlags.None) then
-                            -- Execute the item link to display it
                             if mq.ExecuteTextLink then
                                 mq.ExecuteTextLink(links[1])
                             end
                         end
                         if ImGui.IsItemHovered() then ImGui.SetTooltip('Click to inspect current item') end
                     else
-                        -- Fallback to regular text if no link data available
                         ImGui.Text(curItem.name)
                     end
                 else
-                    -- If no itemlink data, just show as text for now
                     ImGui.Text(curItem.name)
                 end
             else
                 ImGui.Text('--')
             end
 
-            -- Weapon Deltas (colored) - only if weapon
             if isWeapon then
-                -- For weapon Damage: higher is better (green on positive)
-                local function color_damage(delta)
-                    if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
-                    elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
-                    else ImGui.Text('0') end
-                end
-                -- For weapon Delay: LOWER is better, so invert colors
-                local function color_delay(delta)
-                    if delta < 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
-                    elseif delta > 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, '+' .. tostring(delta))
-                    else ImGui.Text('0') end
-                end
-
                 ImGui.TableNextColumn(); color_damage(dDamage)
                 ImGui.TableNextColumn(); color_delay(dDelay)
-            end
-
-            -- Other Deltas (colored)
-            local function colortext(delta)
-                if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
-                elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
-                else ImGui.Text('0') end
             end
 
             ImGui.TableNextColumn(); colortext(dAC)
             ImGui.TableNextColumn(); colortext(dHP)
             ImGui.TableNextColumn(); colortext(dMana)
 
-            -- Action (inline)
             ImGui.TableNextColumn()
             local swapped = false
-            if ImGui.SmallButton('Swap##cmp' .. tostring(i)) then
-                if swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName) then
-                    table.remove(U._candidates, i)
-                    swapped = true
-                    closeAfterSwap = true
+            if row.isMainChar then
+                ImGui.BeginDisabled()
+                ImGui.SmallButton('Swap')
+                ImGui.EndDisabled()
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip('This is your character - already holding the cursor item')
+                end
+            else
+                if ImGui.SmallButton('Swap##cmp_' .. string.format('%s_%d', idPrefix, i)) then
+                    if swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName) then
+                        for idx, candidate in ipairs(U._candidates) do
+                            if candidate == row then
+                                table.remove(U._candidates, idx)
+                                break
+                            end
+                        end
+                        swapped = true
+                        closeAfterSwap = true
+                    end
+                end
+                if ImGui.IsItemHovered() then
+                    ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
                 end
             end
-            if ImGui.IsItemHovered() then
-                ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
-            end
-            
-            ImGui.PopID()
-            if swapped then break end
-        end
 
-        ImGui.EndTable()
+            ImGui.PopID()
+            if swapped then return true end
+        end
+        return false
+    end
+
+    if #compareMainRows > 0 then
+        ImGui.TextColored(0.9, 0.8, 0.2, 1.0, 'Your Character:')
+        if ImGui.BeginTable('EmuBotUpgradeCompareMain', numCols,
+                ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
+            setup_compare_columns()
+            render_compare_rows(compareMainRows, 'main')
+            ImGui.EndTable()
+        end
+        ImGui.Spacing()
+    end
+
+    if #compareBotRows > 0 then
+        if #compareMainRows > 0 then
+            ImGui.TextColored(0.7, 0.9, 1.0, 1.0, 'Bots:')
+        end
+        if ImGui.BeginTable('EmuBotUpgradeCompareBots', numCols,
+                ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
+            setup_compare_columns()
+            sort_specs(compareBotRows)
+            if render_compare_rows(compareBotRows, 'bot') then
+                closeAfterSwap = true
+            end
+            ImGui.EndTable()
+        end
     end
 
     if closeAfterSwap and U._close_window_on_swap then
