@@ -12,6 +12,7 @@ U._show_compare = false
 U._pending_refresh = {}
 U._close_window_on_swap = true
 U._last_cursor_id = nil
+U._level_too_low = false
 
 function U.set_close_window_on_swap(value)
     U._close_window_on_swap = value and true or false
@@ -137,6 +138,7 @@ end
 
 local function clear_candidates()
     U._candidates = {}
+    U._level_too_low = false
 end
 
 local function add_candidate(c)
@@ -174,12 +176,20 @@ end
 local function add_main_char_candidates()
     local cur = mq.TLO.Cursor
     if not cur() then return 0 end
-    
+
     local itemName = cur.Name() or 'Unknown Item'
     local itemID = tonumber(cur.ID() or 0) or 0
     local slotIDs = get_worn_slot_ids(cur)
     if #slotIDs == 0 then return 0 end
-    
+
+    -- Check level requirement
+    local requiredLevel = tonumber(cur.RequiredLevel() or 0) or 0
+    local myLevel = tonumber(mq.TLO.Me.Level() or 0) or 0
+    if requiredLevel > myLevel then
+        U._level_too_low = true
+        return 0  -- Item level too high for main character
+    end
+
     local myName = get_main_char_name() or 'Me'
     local myClass = mq.TLO.Me.Class.ShortName() or 'UNK'
     local classOK = can_item_be_used_by_class(cur, myClass)
@@ -209,21 +219,32 @@ local function compute_local_candidates_from_cursor()
         printf('[EmuBot] Cursor item has no wearable slots.')
         return 0
     end
-    
+
+    -- Check level requirement once for the cursor item
+    local requiredLevel = tonumber(cur.RequiredLevel() or 0) or 0
+
     -- Add the main character (yourself) to the comparison
     add_main_char_candidates()
-    
+
     -- Add bots to the comparison
     local bots = bot_inventory.getAllBots() or {}
     for _, botName in ipairs(bots) do
         local meta = bot_inventory.bot_list_capture_set and bot_inventory.bot_list_capture_set[botName]
         local botClass = meta and meta.Class or nil
-        local classOK = can_item_be_used_by_class(cur, botClass)
-        if classOK then
-            for _, sid in ipairs(slotIDs) do
-                local slotName = slotNames[sid] or ('Slot ' .. tostring(sid))
-                local classAbbrev = extract_class_abbreviation(botClass)
-                add_candidate({ bot = botName, class = classAbbrev, slotid = sid, slotname = slotName, itemID = itemID, itemName = itemName, isMainChar = false })
+        local botLevel = meta and tonumber(meta.Level or 0) or 0
+
+        -- Check level requirement for bot
+        if requiredLevel > botLevel and botLevel > 0 then
+            -- Skip this bot, level too low
+            U._level_too_low = true
+        else
+            local classOK = can_item_be_used_by_class(cur, botClass)
+            if classOK then
+                for _, sid in ipairs(slotIDs) do
+                    local slotName = slotNames[sid] or ('Slot ' .. tostring(sid))
+                    local classAbbrev = extract_class_abbreviation(botClass)
+                    add_candidate({ bot = botName, class = classAbbrev, slotid = sid, slotname = slotName, itemID = itemID, itemName = itemName, isMainChar = false })
+                end
             end
         end
     end
@@ -374,6 +395,109 @@ local function swap_to_bot(botName, itemID, slotID, slotName, itemName)
     return true
 end
 
+local function get_exchange_slot_name(displaySlotName)
+    -- Map display slot names to /exchange command slot names
+    local slotMap = {
+        ['Charm'] = 'charm',
+        ['Left Ear'] = 'leftear',
+        ['Head'] = 'head',
+        ['Face'] = 'face',
+        ['Right Ear'] = 'rightear',
+        ['Neck'] = 'neck',
+        ['Shoulders'] = 'shoulder',
+        ['Arms'] = 'arms',
+        ['Back'] = 'back',
+        ['Left Wrist'] = 'leftwrist',
+        ['Right Wrist'] = 'rightwrist',
+        ['Range'] = 'ranged',
+        ['Hands'] = 'hand',
+        ['Primary'] = 'mainhand',
+        ['Secondary'] = 'offhand',
+        ['Left Ring'] = 'leftfinger',
+        ['Right Ring'] = 'rightfinger',
+        ['Chest'] = 'chest',
+        ['Legs'] = 'leg',
+        ['Feet'] = 'feet',
+        ['Waist'] = 'waist',
+        ['Power Source'] = 'powersource',
+        ['Ammo'] = 'ammo',
+    }
+    return slotMap[displaySlotName] or displaySlotName
+end
+
+local function swap_to_main_char(itemID, slotID, slotName, itemName)
+    local function printf(fmt, ...) if mq.printf then mq.printf(fmt, ...) else print(string.format(fmt, ...)) end end
+
+    local function ensure_cursor_empty(timeoutMs)
+        local deadline = os.clock() + (tonumber(timeoutMs or 1500) or 1500)/1000
+        while mq.TLO.Cursor() do
+            mq.cmd('/autoinventory')
+            mq.delay(100)
+            if os.clock() > deadline then return false end
+        end
+        return true
+    end
+
+    local function pick_up_item_by_id_or_name(id, name)
+        -- Prefer exact item ID
+        local fi = (id and tonumber(id) and tonumber(id) > 0) and mq.TLO.FindItem(tonumber(id)) or nil
+        if fi and fi() then
+            local packSlot = tonumber(fi.ItemSlot() or 0) or 0
+            local subSlot = tonumber(fi.ItemSlot2() or -1) or -1
+            if packSlot >= 23 and subSlot >= 0 then
+                mq.cmdf('/itemnotify in pack%i %i leftmouseup', (packSlot - 22), (subSlot + 1))
+                mq.delay(500)
+                return mq.TLO.Cursor() and (tonumber(mq.TLO.Cursor.ID() or 0) == tonumber(id))
+            end
+        end
+        -- Fallback to exact name click
+        if name and name ~= '' then
+            mq.cmdf('/itemnotify "%s" leftmouseup', name)
+            mq.delay(500)
+            if id and tonumber(id) and tonumber(id) > 0 then
+                return mq.TLO.Cursor() and (tonumber(mq.TLO.Cursor.ID() or 0) == tonumber(id))
+            end
+            return mq.TLO.Cursor() ~= nil
+        end
+        return false
+    end
+
+    local function perform_swap()
+        -- Step 0: make sure cursor is free
+        if not ensure_cursor_empty(1200) then
+            printf('[EmuBot] Could not clear cursor before swap; aborting.')
+            return
+        end
+
+        -- Step 1: pick up the upgrade item from our inventory (by ID or exact name)
+        if not pick_up_item_by_id_or_name(itemID, itemName) then
+            printf('[EmuBot] Failed to pick up upgrade item "%s" (ID %s).', tostring(itemName or ''), tostring(itemID or ''))
+            return
+        end
+
+        -- Step 2: autoinventory the item
+        mq.cmd('/autoinventory')
+        mq.delay(500)
+
+        -- Step 3: exchange the item to the slot
+        if itemName and itemName ~= '' and slotName and slotName ~= '' then
+            local exchangeSlot = get_exchange_slot_name(slotName)
+            mq.cmdf('/exchange "%s" %s', itemName, exchangeSlot)
+            mq.delay(500)
+            printf('[EmuBot] Swapped "%s" to your %s slot.', tostring(itemName or ''), tostring(slotName or ''))
+        else
+            printf('[EmuBot] Failed to swap: missing item name or slot name.')
+        end
+    end
+
+    if type(_G.enqueueTask) == 'function' then
+        _G.enqueueTask(function() perform_swap() end)
+    else
+        perform_swap()
+    end
+    return true
+end
+
 function U.poll_iu()
     clear_candidates()
     if not mq.TLO.Cursor() then
@@ -491,7 +615,11 @@ function U.draw_tab()
     ImGui.Separator()
 
     if #U._candidates == 0 then
-        ImGui.Text('No upgrade candidates yet. Use Poll (^iu) or Scan Locally.')
+        if U._level_too_low then
+            ImGui.TextColored(0.9, 0.5, 0.2, 1.0, 'Item Required Level Exceeds Current Level')
+        else
+            ImGui.Text('No upgrade candidates yet. Use Poll (^iu) or Scan Locally.')
+        end
         -- Still draw compare window if user opened it (to show empty state)
         if U._show_compare then U.draw_compare_window() end
         return
@@ -639,27 +767,26 @@ function U.draw_tab()
             ImGui.TableNextColumn(); colortext(entry.deltaMana)
 
             ImGui.TableNextColumn()
-            if row.isMainChar then
-                -- Show disabled button for main character
-                ImGui.BeginDisabled()
-                ImGui.SmallButton('Swap')
-                ImGui.EndDisabled()
-                if ImGui.IsItemHovered() then
-                    ImGui.SetTooltip('This is your character - already holding the cursor item')
+            if ImGui.SmallButton('Swap') then
+                local ok
+                if row.isMainChar then
+                    ok = swap_to_main_char(tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
+                else
+                    ok = swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
                 end
-            else
-                if ImGui.SmallButton('Swap') then
-                    local ok = swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
-                    if ok then
-                        for idx, candidate in ipairs(U._candidates) do
-                            if candidate == row then
-                                table.remove(U._candidates, idx)
-                                break
-                            end
+                if ok then
+                    for idx, candidate in ipairs(U._candidates) do
+                        if candidate == row then
+                            table.remove(U._candidates, idx)
+                            break
                         end
                     end
                 end
-                if ImGui.IsItemHovered() then
+            end
+            if ImGui.IsItemHovered() then
+                if row.isMainChar then
+                    ImGui.SetTooltip('Swap this item to your ' .. (row.slotname or 'slot'))
+                else
                     ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
                 end
             end
@@ -785,19 +912,33 @@ end
 local function on_iu_basic(line, name, slotPhrase)
     -- Skip if this is the main character (we add them separately)
     if is_main_char_name(name) then return end
-    
+
     local itemID = tonumber(mq.TLO.Cursor.ID() or 0) or 0
     local itemName = mq.TLO.Cursor.Name() or 'Item'
     local sid, sname = slot_from_phrase(slotPhrase)
     if not sid then return end
-    
+
+    -- Check level requirement
+    local cur = mq.TLO.Cursor
+    if cur and cur() then
+        local requiredLevel = tonumber(cur.RequiredLevel() or 0) or 0
+        local botLevel = 0
+        if bot_inventory and bot_inventory.bot_list_capture_set and bot_inventory.bot_list_capture_set[name] then
+            botLevel = tonumber(bot_inventory.bot_list_capture_set[name].Level or 0) or 0
+        end
+        if requiredLevel > botLevel and botLevel > 0 then
+            U._level_too_low = true
+            return  -- Bot level too low for this item
+        end
+    end
+
     -- Get bot class from metadata if available
     local botClass = 'UNK'
     if bot_inventory and bot_inventory.bot_list_capture_set and bot_inventory.bot_list_capture_set[name] then
         botClass = bot_inventory.bot_list_capture_set[name].Class or 'UNK'
     end
     local classAbbrev = extract_class_abbreviation(botClass)
-    
+
     add_candidate({ bot = name, class = classAbbrev, slotid = sid, slotname = sname, itemID = itemID, itemName = itemName, isMainChar = false })
     U._show_compare = true
 end
@@ -854,7 +995,11 @@ function U.draw_compare_window()
     ImGui.Separator()
 
     if #U._candidates == 0 then
-        ImGui.Text('No candidates to compare.')
+        if U._level_too_low then
+            ImGui.TextColored(0.9, 0.5, 0.2, 1.0, 'Item Required Level Exceeds Current Level')
+        else
+            ImGui.Text('No candidates to compare.')
+        end
         ImGui.End()
         return
     end
@@ -1072,27 +1217,28 @@ function U.draw_compare_window()
 
             ImGui.TableNextColumn()
             local swapped = false
-            if row.isMainChar then
-                ImGui.BeginDisabled()
-                ImGui.SmallButton('Swap')
-                ImGui.EndDisabled()
-                if ImGui.IsItemHovered() then
-                    ImGui.SetTooltip('This is your character - already holding the cursor item')
+            if ImGui.SmallButton('Swap##cmp_' .. string.format('%s_%d', idPrefix, i)) then
+                local ok
+                if row.isMainChar then
+                    ok = swap_to_main_char(tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
+                else
+                    ok = swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
                 end
-            else
-                if ImGui.SmallButton('Swap##cmp_' .. string.format('%s_%d', idPrefix, i)) then
-                    if swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName) then
-                        for idx, candidate in ipairs(U._candidates) do
-                            if candidate == row then
-                                table.remove(U._candidates, idx)
-                                break
-                            end
+                if ok then
+                    for idx, candidate in ipairs(U._candidates) do
+                        if candidate == row then
+                            table.remove(U._candidates, idx)
+                            break
                         end
-                        swapped = true
-                        closeAfterSwap = true
                     end
+                    swapped = true
+                    closeAfterSwap = true
                 end
-                if ImGui.IsItemHovered() then
+            end
+            if ImGui.IsItemHovered() then
+                if row.isMainChar then
+                    ImGui.SetTooltip('Swap this item to your ' .. (row.slotname or 'slot'))
+                else
                     ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
                 end
             end

@@ -425,6 +425,62 @@ local function getLayoutBotList()
     return list
 end
 
+local function getAllNotInGroupNames()
+    -- Returns list of all character names currently in the "Not In Group" list
+    local names = {}
+    local child = mq.TLO.Window('RaidWindow').Child('RAID_NotInGroupPlayerList')
+    if not child or child() == 0 then return names end
+    local count = child.Items() or 0
+    for i = 1, count do
+        local name = child.List(i, 2)()
+        if name and name ~= '' then
+            table.insert(names, name)
+        end
+    end
+    return names
+end
+
+local function findDesiredGroupForBot(name)
+    -- Find which group this bot should be in according to desiredLayout
+    if not name or name == '' then return nil end
+    for g = 1, 12 do
+        for s = 1, 6 do
+            local layoutName = M.desiredLayout[g] and M.desiredLayout[g][s]
+            if layoutName and layoutName:lower() == name:lower() then
+                return g
+            end
+        end
+    end
+    return nil
+end
+
+local function placeRemainingBots()
+    -- Check "Not In Group" list and place any bots that should be in groups
+    local notInGroup = getAllNotInGroupNames()
+    if #notInGroup == 0 then
+        return 0, {}  -- No bots to place
+    end
+
+    local placed = 0
+    local failed = {}
+
+    for _, name in ipairs(notInGroup) do
+        local targetGroup = findDesiredGroupForBot(name)
+        if targetGroup then
+            -- This bot should be in a group, try to place them
+            local ok = assignFromNotInGroup(name, targetGroup)
+            if ok then
+                placed = placed + 1
+            else
+                table.insert(failed, name)
+            end
+            mq.delay(100)
+        end
+    end
+
+    return placed, failed
+end
+
 function M.formRaidForSelected()
     local bots = listSelectedBots()
     if #bots == 0 then
@@ -454,8 +510,25 @@ function M.applyLayout()
             end
         end
     end
+
+    -- Check for any remaining bots in "Not In Group" and place them
+    local additionalPlaced, failed = placeRemainingBots()
+    totalAssigned = totalAssigned + additionalPlaced
+
     raidUnlock()
-    M.statusText = string.format('Applied layout to %d bot(s) from Not In Group.', totalAssigned)
+
+    if #failed > 0 then
+        local failedNames = table.concat(failed, ', ')
+        printf('[EmuBot Raid] WARNING: %d bot(s) failed to place: %s', #failed, failedNames)
+        M.statusText = string.format('Applied layout: %d placed. WARNING: %d failed!', totalAssigned, #failed)
+    else
+        local remaining = getAllNotInGroupNames()
+        if #remaining > 0 then
+            M.statusText = string.format('Applied layout: %d placed. %d remain in Not In Group (not in layout).', totalAssigned, #remaining)
+        else
+            M.statusText = string.format('Applied layout: %d placed. All bots from layout are in groups.', totalAssigned)
+        end
+    end
 end
 
 -- Combined: spawn/invite all bots present in the layout, then arrange into groups
@@ -499,14 +572,30 @@ function M.formRaidFromLayout()
             end
         end
     end
+    -- Check for any remaining bots in "Not In Group" and place them
+    local additionalPlaced, failed = placeRemainingBots()
+    totalAssigned = totalAssigned + additionalPlaced
+
     raidUnlock()
-    M.statusText = string.format('Invited %d local, %d remote and arranged %d bot(s).', #localBots, remoteInvited, totalAssigned)
+
+    if #failed > 0 then
+        local failedNames = table.concat(failed, ', ')
+        printf('[EmuBot Raid] WARNING: %d bot(s) failed to place: %s', #failed, failedNames)
+        M.statusText = string.format('Invited %d local, %d remote, placed %d bot(s). WARNING: %d failed!', #localBots, remoteInvited, totalAssigned, #failed)
+    else
+        local remaining = getAllNotInGroupNames()
+        if #remaining > 0 then
+            M.statusText = string.format('Invited %d local, %d remote, placed %d bot(s). %d remain in Not In Group (not in layout).', #localBots, remoteInvited, totalAssigned, #remaining)
+        else
+            M.statusText = string.format('Invited %d local, %d remote, placed %d bot(s). All bots from layout are in groups.', #localBots, remoteInvited, totalAssigned)
+        end
+    end
 end
 
 -- UI
 function M.draw_tab()
     initLayout()
-    seedMeDefault()
+    -- seedMeDefault()  -- Removed: Allow manual placement of main character
     -- Top controls
     if ImGui.Button('Refresh Groups') then end
     ImGui.SameLine()
@@ -529,24 +618,52 @@ function M.draw_tab()
     end
 
     ImGui.Separator()
-    ImGui.Text('All Bots:')
+    ImGui.Text('All Characters:')
+
+    -- Build list of all characters (main + bots)
+    local allCharacters = {}
+    local myName = getMyName()
+    if myName then
+        table.insert(allCharacters, {name = myName, isMainChar = true})
+    end
+
     local allBots = {}
     if bot_inventory and bot_inventory.getAllBots then
         allBots = bot_inventory.getAllBots() or {}
     end
-    table.sort(allBots, function(a, b) return tostring(a):lower() < tostring(b):lower() end)
+    for _, botName in ipairs(allBots) do
+        table.insert(allCharacters, {name = botName, isMainChar = false})
+    end
+    table.sort(allCharacters, function(a, b) return tostring(a.name):lower() < tostring(b.name):lower() end)
+
     if ImGui.BeginTable('AllBotsTable', 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
-        ImGui.TableSetupColumn('Bot Name', ImGuiTableColumnFlags.WidthStretch)
+        ImGui.TableSetupColumn('Character Name', ImGuiTableColumnFlags.WidthStretch)
         ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 120)
         ImGui.TableSetupColumn('Add', ImGuiTableColumnFlags.WidthFixed, 70)
         ImGui.TableHeadersRow()
-        for _, name in ipairs(allBots) do
+        for _, char in ipairs(allCharacters) do
+            local name = char.name
             ImGui.TableNextRow()
-            ImGui.TableNextColumn(); ImGui.Text(tostring(name))
+            ImGui.TableNextColumn()
+            if char.isMainChar then
+                ImGui.TextColored(0.3, 0.9, 0.3, 1.0, tostring(name) .. ' (You)')
+            else
+                ImGui.Text(tostring(name))
+            end
             ImGui.TableNextColumn();
-            local clsMeta = bot_inventory and bot_inventory.bot_list_capture_set and
-            bot_inventory.bot_list_capture_set[name]
-            local rawClass = clsMeta and clsMeta.Class or ''
+            local rawClass = ''
+            if char.isMainChar then
+                -- Get main character's class
+                if mq and mq.TLO and mq.TLO.Me and mq.TLO.Me.Class then
+                    local ok, cls = pcall(function() return mq.TLO.Me.Class.Name() end)
+                    if ok and cls then rawClass = cls end
+                end
+            else
+                -- Get bot's class from bot inventory
+                local clsMeta = bot_inventory and bot_inventory.bot_list_capture_set and
+                bot_inventory.bot_list_capture_set[name]
+                rawClass = clsMeta and clsMeta.Class or ''
+            end
             local up = tostring(rawClass or ''):upper()
             local fullMap = {
                 WAR = 'Warrior',

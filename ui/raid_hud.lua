@@ -17,6 +17,8 @@ local state = {
     show = false,
     showSettings = false,
     showToggleButton = true,
+    saveMessage = nil,
+    saveMessageTime = 0,
 }
 
 local config = {
@@ -687,8 +689,13 @@ local function save_config()
     local encoded = json.encode(config, {indent = true})
     local f = io.open(CONFIG_PATH, 'w')
     if not f then return false end
-    local ok = pcall(f.write, f, encoded)
-    pcall(f.close, f)
+    local ok, err = pcall(function()
+        f:write(encoded)
+        f:close()
+    end)
+    if not ok then
+        print('[Raid HUD] Error saving config: ' .. tostring(err))
+    end
     return ok and true or false
 end
 
@@ -700,12 +707,18 @@ local function load_config()
         if not f then return false end
         loaded_from_legacy = true
     end
-    local ok, content = pcall(f.read, f, '*a')
-    pcall(f.close, f)
+    local ok, content = pcall(function()
+        local data = f:read('*a')
+        f:close()
+        return data
+    end)
     if not ok or not content or content == '' then return false end
     if not has_json then return false end
     local decoded, pos, err = json.decode(content)
-    if not decoded or err then return false end
+    if not decoded or err then
+        print('[Raid HUD] Error loading config: ' .. tostring(err))
+        return false
+    end
     deep_merge(config, decoded)
     if loaded_from_legacy then pcall(save_config) end
     return true
@@ -1162,13 +1175,29 @@ local function draw_settings_window()
     
     ImGui.Separator()
     if ImGui.Button('Save Settings') then
-        save_config()
+        if save_config() then
+            state.saveMessage = 'Settings saved successfully!'
+            state.saveMessageTime = os.clock()
+        else
+            state.saveMessage = 'Failed to save settings.'
+            state.saveMessageTime = os.clock()
+        end
     end
     ImGui.SameLine()
     if ImGui.Button('Reset to Defaults') then
         -- Reset config to defaults (would need to redefine defaults)
     end
-    
+
+    -- Show save message for 3 seconds
+    if state.saveMessage and (os.clock() - state.saveMessageTime) < 3 then
+        ImGui.SameLine()
+        if state.saveMessage:find('success') then
+            ImGui.TextColored(0.0, 1.0, 0.0, 1.0, state.saveMessage)
+        else
+            ImGui.TextColored(1.0, 0.0, 0.0, 1.0, state.saveMessage)
+        end
+    end
+
     ImGui.End()
     pop_styles()
 end
