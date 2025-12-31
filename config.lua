@@ -2,6 +2,34 @@ local mq = require('mq')
 
 local M = {}
 
+-- Initialize lfs once at module load
+local lfs = nil
+do
+    local ok, result = pcall(require, 'lfs')
+    if ok and result then
+        lfs = result
+    else
+        -- Try to install via PackageMan
+        local ok_pm, PackageMan = pcall(require, 'mq.PackageMan')
+        if not ok_pm then
+            ok_pm, PackageMan = pcall(require, 'mq/PackageMan')
+        end
+        if ok_pm and PackageMan and type(PackageMan.Require) == 'function' then
+            local ok_install, install_result = pcall(function()
+                return PackageMan.Require('luafilesystem', 'lfs')
+            end)
+            if ok_install then
+                lfs = install_result
+                print('[EmuBot Config] Successfully installed luafilesystem via PackageMan')
+            else
+                print('[EmuBot Config] Warning: lfs module not available, directory creation will be disabled')
+            end
+        else
+            print('[EmuBot Config] Warning: lfs module not available, directory creation will be disabled')
+        end
+    end
+end
+
 local function normalize(path)
     if not path or path == '' then return nil end
     path = tostring(path):gsub('\\', '/')
@@ -38,9 +66,8 @@ local function resolve_config_root()
 end
 
 local function ensure_dir(path)
-    local ok, lfs = pcall(require, 'lfs')
-    if not ok or not lfs then
-        print('[EmuBot Config] Warning: lfs module not available, cannot create directories')
+    if not lfs then
+        -- lfs was not available at module init
         return false
     end
 
