@@ -7,6 +7,7 @@ local db = require('modules.db')
 local bot_inventory = require('modules.bot_inventory')
 local connected_players = require('modules.connected_players')
 local json = require('dkjson')
+local config_paths = require('config')
 
 local M = {}
 
@@ -164,7 +165,7 @@ end
 
 -- Persistence (save/load raid layouts)
 local function layouts_path()
-    return string.format('%s/raid_layouts.json', mq.configDir)
+    return config_paths.get_path('raid_layouts.json')
 end
 
 M._savedLayouts = {}
@@ -200,12 +201,25 @@ function M.save_current_layout(name)
     end
     M._savedLayouts[name] = out
     local p = layouts_path()
-    local f = io.open(p, 'w')
+    local f, err = io.open(p, 'w')
     if not f then
-        M.statusText = 'Failed to open raid_layouts.json for write'; return false
+        M.statusText = 'Failed to open raid_layouts.json for write'
+        print(string.format('[Raid Manager] Error: Could not open config file for writing: %s', p))
+        if err then
+            print(string.format('[Raid Manager] Error details: %s', tostring(err)))
+        end
+        print('[Raid Manager] Make sure the config directory exists and is writable')
+        return false
     end
-    f:write(json.encode(M._savedLayouts, { indent = true }))
-    f:close()
+    local ok, write_err = pcall(function()
+        f:write(json.encode(M._savedLayouts, { indent = true }))
+        f:close()
+    end)
+    if not ok then
+        M.statusText = 'Failed to write raid_layouts.json'
+        print('[Raid Manager] Error saving layouts: ' .. tostring(write_err))
+        return false
+    end
     M.statusText = string.format('Saved layout "%s"', name)
     return true
 end
@@ -224,9 +238,24 @@ function M.delete_layout(name)
     if not M._savedLayouts[name] then return end
     M._savedLayouts[name] = nil
     local p = layouts_path()
-    local f = io.open(p, 'w')
-    if f then
-        f:write(json.encode(M._savedLayouts, { indent = true })); f:close()
+    local f, err = io.open(p, 'w')
+    if not f then
+        M.statusText = 'Failed to delete layout'
+        print(string.format('[Raid Manager] Error: Could not open config file for writing: %s', p))
+        if err then
+            print(string.format('[Raid Manager] Error details: %s', tostring(err)))
+        end
+        print('[Raid Manager] Make sure the config directory exists and is writable')
+        return
+    end
+    local ok, write_err = pcall(function()
+        f:write(json.encode(M._savedLayouts, { indent = true }))
+        f:close()
+    end)
+    if not ok then
+        M.statusText = 'Failed to delete layout'
+        print('[Raid Manager] Error deleting layout: ' .. tostring(write_err))
+        return
     end
     M.statusText = string.format('Deleted layout "%s"', name)
 end

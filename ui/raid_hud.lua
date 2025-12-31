@@ -687,14 +687,21 @@ end
 local function save_config()
     if not has_json then return false end
     local encoded = json.encode(config, {indent = true})
-    local f = io.open(CONFIG_PATH, 'w')
-    if not f then return false end
-    local ok, err = pcall(function()
+    local f, err = io.open(CONFIG_PATH, 'w')
+    if not f then
+        print(string.format('[Raid HUD] Error: Could not open config file for writing: %s', CONFIG_PATH))
+        if err then
+            print(string.format('[Raid HUD] Error details: %s', tostring(err)))
+        end
+        print('[Raid HUD] Make sure the config directory exists and is writable')
+        return false
+    end
+    local ok, write_err = pcall(function()
         f:write(encoded)
         f:close()
     end)
     if not ok then
-        print('[Raid HUD] Error saving config: ' .. tostring(err))
+        print('[Raid HUD] Error saving config: ' .. tostring(write_err))
     end
     return ok and true or false
 end

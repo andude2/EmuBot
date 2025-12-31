@@ -287,9 +287,19 @@ end
 local function save_config()
     if not has_json then return false end
     local encoded = json.encode(config, {indent=true})
-    local f = io.open(CONFIG_PATH, 'w')
-    if not f then return false end
-    local ok = pcall(f.write, f, encoded)
+    local f, err = io.open(CONFIG_PATH, 'w')
+    if not f then
+        print(string.format('[Commands UI] Error: Could not open config file for writing: %s', CONFIG_PATH))
+        if err then
+            print(string.format('[Commands UI] Error details: %s', tostring(err)))
+        end
+        print('[Commands UI] Make sure the config directory exists and is writable')
+        return false
+    end
+    local ok, write_err = pcall(f.write, f, encoded)
+    if not ok then
+        print('[Commands UI] Error saving config: ' .. tostring(write_err))
+    end
     pcall(f.close, f)
     return ok and true or false
 end

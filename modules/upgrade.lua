@@ -251,33 +251,6 @@ local function compute_local_candidates_from_cursor()
     return #U._candidates
 end
 
-local function ensure_item_on_cursor(itemID)
-    if mq.TLO.Cursor() then
-        local cid = tonumber(mq.TLO.Cursor.ID() or 0) or 0
-        if cid == itemID then return true end
-        -- Try to autoinventory to free cursor
-        mq.cmd('/autoinventory')
-        mq.delay(200)
-    end
-    -- Find item in inventory
-    local fi = mq.TLO.FindItem(itemID)
-    if not fi() then return false end
-    local packSlot = tonumber(fi.ItemSlot() or 0) or 0
-    local subSlot = tonumber(fi.ItemSlot2() or -1) or -1
-    if packSlot >= 23 and subSlot >= 0 then
-        mq.cmdf('/itemnotify in pack%i %i leftmouseup', (packSlot - 22), (subSlot + 1))
-        mq.delay(200)
-    else
-        -- It may be in main inventory (not inside bag)
-        if packSlot >= 23 and subSlot < 0 then
-            -- click the top-level slot
-            mq.cmdf('/itemnotify in pack%i 1 leftmouseup', (packSlot - 22))
-            mq.delay(200)
-        end
-    end
-    return mq.TLO.Cursor() and tonumber(mq.TLO.Cursor.ID() or 0) == itemID
-end
-
 local function swap_to_bot(botName, itemID, slotID, slotName, itemName)
     local function printf(fmt, ...) if mq.printf then mq.printf(fmt, ...) else print(string.format(fmt, ...)) end end
 
@@ -425,6 +398,43 @@ local function get_exchange_slot_name(displaySlotName)
     return slotMap[displaySlotName] or displaySlotName
 end
 
+local function get_slot_id(displaySlotName)
+    -- Map display slot names to numeric slot IDs for manual swapping
+    local slotMap = {
+        ['Charm'] = 0,
+        ['Left Ear'] = 1,
+        ['Head'] = 2,
+        ['Face'] = 3,
+        ['Right Ear'] = 4,
+        ['Neck'] = 5,
+        ['Shoulders'] = 6,
+        ['Arms'] = 7,
+        ['Back'] = 8,
+        ['Left Wrist'] = 9,
+        ['Right Wrist'] = 10,
+        ['Range'] = 11,
+        ['Hands'] = 12,
+        ['Primary'] = 13,
+        ['Secondary'] = 14,
+        ['Left Ring'] = 15,
+        ['Right Ring'] = 16,
+        ['Chest'] = 17,
+        ['Legs'] = 18,
+        ['Feet'] = 19,
+        ['Waist'] = 20,
+        ['Power Source'] = 21,
+        ['Ammo'] = 22,
+    }
+    return slotMap[displaySlotName]
+end
+
+local function is_exchange_plugin_loaded()
+    if not mq.TLO.Plugin then return false end
+    local plugin = mq.TLO.Plugin('MQ2Exchange')
+    if not plugin then return false end
+    return plugin.IsLoaded() or false
+end
+
 local function swap_to_main_char(itemID, slotID, slotName, itemName)
     local function printf(fmt, ...) if mq.printf then mq.printf(fmt, ...) else print(string.format(fmt, ...)) end end
 
@@ -462,19 +472,41 @@ local function swap_to_main_char(itemID, slotID, slotName, itemName)
         return false
     end
 
-    local function perform_swap()
-        -- Step 0: make sure cursor is free
-        if not ensure_cursor_empty(1200) then
-            printf('[EmuBot] Could not clear cursor before swap; aborting.')
+    local function perform_manual_swap()
+        -- Manual swap process when MQ2Exchange isn't loaded
+        printf('[EmuBot] MQ2Exchange not loaded, using manual swap method...')
+
+        -- Step 1: Get the equipment slot ID
+        local equipSlotID = get_slot_id(slotName)
+        if not equipSlotID then
+            printf('[EmuBot] Unknown equipment slot: %s', tostring(slotName or ''))
+            -- Try to clear cursor
+            if mq.TLO.Cursor() then
+                mq.cmd('/autoinventory')
+                mq.delay(300)
+            end
             return
         end
 
-        -- Step 1: pick up the upgrade item from our inventory (by ID or exact name)
-        if not pick_up_item_by_id_or_name(itemID, itemName) then
-            printf('[EmuBot] Failed to pick up upgrade item "%s" (ID %s).', tostring(itemName or ''), tostring(itemID or ''))
-            return
+        -- Step 2: Click the equipment slot to swap items (new item goes to slot, old item goes to cursor)
+        mq.cmdf('/itemnotify %d leftmouseup', equipSlotID)
+        mq.delay(500)
+
+        -- Step 4: Autoinventory the old item that's now on cursor
+        if mq.TLO.Cursor() then
+            mq.cmd('/autoinventory')
+            mq.delay(500)
         end
 
+        if ensure_cursor_empty(500) then
+            printf('[EmuBot] Successfully swapped "%s" to your %s slot.', tostring(itemName or ''), tostring(slotName or ''))
+        else
+            printf('[EmuBot] Warning: Swap completed but cursor still has an item.')
+        end
+    end
+
+    local function perform_swap_with_exchange()
+        -- Swap using MQ2Exchange plugin
         -- Step 2: autoinventory the item
         mq.cmd('/autoinventory')
         mq.delay(500)
@@ -487,6 +519,15 @@ local function swap_to_main_char(itemID, slotID, slotName, itemName)
             printf('[EmuBot] Swapped "%s" to your %s slot.', tostring(itemName or ''), tostring(slotName or ''))
         else
             printf('[EmuBot] Failed to swap: missing item name or slot name.')
+        end
+    end
+
+    local function perform_swap()
+        -- Check if MQ2Exchange is loaded and use appropriate swap method
+        if is_exchange_plugin_loaded() then
+            perform_swap_with_exchange()
+        else
+            perform_manual_swap()
         end
     end
 

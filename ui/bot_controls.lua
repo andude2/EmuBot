@@ -471,9 +471,19 @@ local function _batch_save()
         queueDelayMs = M._batch.queueDelayMs,
     }
     local encoded = _json.encode(data, {indent=true})
-    local f = io.open(_batch_config_path, 'w')
-    if not f then return false end
-    local ok = pcall(f.write, f, encoded)
+    local f, err = io.open(_batch_config_path, 'w')
+    if not f then
+        print(string.format('[Bot Controls] Error: Could not open batch config file for writing: %s', _batch_config_path))
+        if err then
+            print(string.format('[Bot Controls] Error details: %s', tostring(err)))
+        end
+        print('[Bot Controls] Make sure the config directory exists and is writable')
+        return false
+    end
+    local ok, write_err = pcall(f.write, f, encoded)
+    if not ok then
+        print('[Bot Controls] Error saving batch config: ' .. tostring(write_err))
+    end
     pcall(f.close, f)
     return ok and true or false
 end
