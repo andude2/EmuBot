@@ -642,7 +642,7 @@ local quickSettings = {
         commands = {
             {
                 name = "Tank Healing Priority",
-                tooltip = "Sets up complete heals for tanks (Warriors, Paladins, SKs) at 85% health with 3-second chain delays",
+                tooltip = "Sets up complete heals for tanks (Warriors, Paladins, SKs) at 85%% health with 3-second chain delays",
                 actions = {
                     "/say ^spellholds completeheals 1 spawned",
                     "/say ^spellholds completeheals 0 byclass 1", -- Warrior
@@ -658,7 +658,7 @@ local quickSettings = {
             },
             {
                 name = "Fast Heal Thresholds",
-                tooltip = "Everyone gets fast heals at 40%, tanks get them at 65%. Very fast heals: everyone 25%, tanks 40%",
+                tooltip = "Everyone gets fast heals at 40%%, tanks get them at 65%%. Very fast heals: everyone 25%%, tanks 40%%",
                 actions = {
                     "/say ^spellmaxthresholds fastheals 40 spawned",
                     "/say ^spellmaxthresholds fastheals 65 byclass 1", -- Warriors
@@ -672,7 +672,7 @@ local quickSettings = {
             },
             {
                 name = "HoT Heal Setup",
-                tooltip = "Only tanks receive HoT heals, starting at 95% health. Disables group heals for everyone.",
+                tooltip = "Only tanks receive HoT heals, starting at 95%% health. Disables group heals for everyone.",
                 actions = {
                     "/say ^spellholds hotheals 1 spawned",
                     "/say ^spellholds hotheals 0 byclass 1", -- Warrior
