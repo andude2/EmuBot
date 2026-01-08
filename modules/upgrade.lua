@@ -4,6 +4,8 @@
 local mq = require('mq')
 local bot_inventory = require('modules.bot_inventory')
 local applyTableSort = require('modules.ui_table_utils').applyTableSort
+local config_paths = require('config')
+local has_json, json = pcall(require, 'dkjson')
 
 local U = {}
 
@@ -28,6 +30,278 @@ local get_cursor_stats
 local get_cursor_weapon_stats
 local get_cursor_all_stats
 local get_item_all_stats
+local get_cached_item_all_stats
+
+local COLUMN_CONFIG_FILENAME = 'upgrade_compare_columns.json'
+local COLUMN_CONFIG_PATH = config_paths.get_path(COLUMN_CONFIG_FILENAME)
+local column_config = nil
+local ALWAYS_VISIBLE_COLUMNS = {
+    character = true,
+    class = true,
+    current = true,
+    damage = true,
+    delay = true,
+    ac = true,
+    hp = true,
+    mana = true,
+    action = true,
+}
+local ensure_column_config
+
+local default_column_order = {
+    'character', 'class', 'slot', 'current',
+    'damage', 'delay', 'ac', 'hp', 'mana',
+    'str', 'dex', 'agi', 'sta', 'int', 'wis', 'cha',
+    'heroicStr', 'heroicDex', 'heroicAgi', 'heroicSta', 'heroicInt', 'heroicWis', 'heroicCha',
+    'svMagic', 'svFire', 'svCold', 'svPoison', 'svDisease', 'svCorruption',
+    'action',
+}
+
+local compare_column_defs = {}
+
+local function draw_positive_delta(delta, invert)
+    delta = tonumber(delta or 0) or 0
+    local prefix = delta > 0 and '+' or ''
+    if invert then
+        if delta < 0 then
+            ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
+        elseif delta > 0 then
+            ImGui.TextColored(0.9, 0.0, 0.0, 1.0, prefix .. tostring(delta))
+        else
+            ImGui.Text('0')
+        end
+    else
+        if delta > 0 then
+            ImGui.TextColored(0.0, 0.9, 0.0, 1.0, prefix .. tostring(delta))
+        elseif delta < 0 then
+            ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
+        else
+            ImGui.Text('0')
+        end
+    end
+end
+
+local function draw_damage_delta(delta)
+    draw_positive_delta(delta, false)
+end
+
+local function draw_delay_delta(delta)
+    draw_positive_delta(delta, true)
+end
+
+local function draw_generic_delta(delta)
+    draw_positive_delta(delta, false)
+end
+local function register_column(def)
+    if not def or not def.id then return end
+    if def.default_visible == nil then def.default_visible = true end
+    compare_column_defs[def.id] = def
+end
+
+register_column({
+    id = 'character',
+    label = 'Character',
+    width = 120,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    draw = function(ctx)
+        local row = ctx.row
+        local label = row.bot or (row.isMainChar and 'You' or 'Unknown')
+        local selectableLabel = string.format('%s##target_%s', label, ctx.id)
+        if ImGui.Selectable(selectableLabel, false, ImGuiSelectableFlags.None) then
+            if not row.isMainChar and row.bot then
+                local botName = row.bot
+                local s = mq.TLO.Spawn(string.format('= %s', botName))
+                if s and s.ID and s.ID() and s.ID() > 0 then
+                    mq.cmdf('/target id %d', s.ID())
+                    printf('[EmuBot] Targeting %s', botName)
+                else
+                    mq.cmdf('/target "%s"', botName)
+                    printf('[EmuBot] Attempting to target %s', botName)
+                end
+            end
+        end
+        if ImGui.IsItemHovered() then
+            if row.isMainChar then
+                ImGui.SetTooltip('This is you')
+            else
+                ImGui.SetTooltip('Click to target ' .. (row.bot or 'bot'))
+            end
+        end
+    end,
+    sort_value = function(entry)
+        return entry.ref.bot or ''
+    end,
+})
+
+register_column({
+    id = 'class',
+    label = 'Class',
+    width = 60,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    draw = function(ctx)
+        ImGui.Text(ctx.row.class or 'UNK')
+    end,
+    sort_value = function(entry)
+        return entry.ref.class or ''
+    end,
+})
+
+register_column({
+    id = 'slot',
+    label = 'Slot',
+    width = 120,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    draw = function(ctx)
+        ImGui.Text(ctx.row.slotname or ('Slot ' .. tostring(ctx.row.slotid or '?')))
+    end,
+    sort_value = function(entry)
+        return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?'))
+    end,
+})
+
+register_column({
+    id = 'current',
+    label = 'Current',
+    flags = ImGuiTableColumnFlags.WidthStretch,
+    draw = function(ctx)
+        local curItem = ctx.curItem
+        if curItem and curItem.name and curItem.name ~= '' then
+            if curItem.itemlink and curItem.itemlink ~= '' then
+                local links = mq.ExtractLinks(curItem.itemlink)
+                if links and #links > 0 then
+                    if ImGui.Selectable(curItem.name .. '##inspect_' .. ctx.id, false, ImGuiSelectableFlags.None) then
+                        if mq.ExecuteTextLink then
+                            mq.ExecuteTextLink(links[1])
+                        end
+                    end
+                    if ImGui.IsItemHovered() then ImGui.SetTooltip('Click to inspect current item') end
+                    return
+                end
+            end
+            ImGui.Text(curItem.name)
+        else
+            ImGui.Text('--')
+        end
+    end,
+    sort_value = function(entry)
+        return (entry.stats.item and entry.stats.item.name) or ''
+    end,
+})
+
+register_column({
+    id = 'damage',
+    label = 'Dmg',
+    width = 60,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    requires_weapon = true,
+    draw = function(ctx)
+        draw_damage_delta(ctx.entry.deltaDamage)
+    end,
+    sort_value = function(entry)
+        return entry.deltaDamage or 0
+    end,
+})
+
+register_column({
+    id = 'delay',
+    label = 'Delay',
+    width = 70,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    requires_weapon = true,
+    draw = function(ctx)
+        draw_delay_delta(ctx.entry.deltaDelay)
+    end,
+    sort_value = function(entry)
+        return entry.deltaDelay or 0
+    end,
+})
+
+register_column({
+    id = 'ac',
+    label = 'AC',
+    width = 60,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    draw = function(ctx) draw_generic_delta(ctx.entry.deltaAC) end,
+    sort_value = function(entry) return entry.deltaAC or 0 end,
+})
+
+register_column({
+    id = 'hp',
+    label = 'HP',
+    width = 60,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    draw = function(ctx) draw_generic_delta(ctx.entry.deltaHP) end,
+    sort_value = function(entry) return entry.deltaHP or 0 end,
+})
+
+register_column({
+    id = 'mana',
+    label = 'Mana',
+    width = 70,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    draw = function(ctx) draw_generic_delta(ctx.entry.deltaMana) end,
+    sort_value = function(entry) return entry.deltaMana or 0 end,
+})
+
+local function register_delta_column(id, label, field)
+    register_column({
+        id = id,
+        label = label,
+        width = 50,
+        flags = ImGuiTableColumnFlags.WidthFixed,
+        requires_advanced = true,
+        draw = function(ctx)
+            draw_generic_delta(ctx.entry[field])
+        end,
+        sort_value = function(entry)
+            return entry[field] or 0
+        end,
+    })
+end
+
+register_delta_column('str', 'STR', 'deltaSTR')
+register_delta_column('dex', 'DEX', 'deltaDEX')
+register_delta_column('agi', 'AGI', 'deltaAGI')
+register_delta_column('sta', 'STA', 'deltaSTA')
+register_delta_column('int', 'INT', 'deltaINT')
+register_delta_column('wis', 'WIS', 'deltaWIS')
+register_delta_column('cha', 'CHA', 'deltaCHA')
+
+register_delta_column('heroicStr', 'hSTR', 'deltaHSTR')
+register_delta_column('heroicDex', 'hDEX', 'deltaHDEX')
+register_delta_column('heroicAgi', 'hAGI', 'deltaHAGI')
+register_delta_column('heroicSta', 'hSTA', 'deltaHSTA')
+register_delta_column('heroicInt', 'hINT', 'deltaHINT')
+register_delta_column('heroicWis', 'hWIS', 'deltaHWIS')
+register_delta_column('heroicCha', 'hCHA', 'deltaHCHA')
+
+register_delta_column('svMagic', 'svM', 'deltaSvMagic')
+register_delta_column('svFire', 'svF', 'deltaSvFire')
+register_delta_column('svCold', 'svC', 'deltaSvCold')
+register_delta_column('svPoison', 'svP', 'deltaSvPoison')
+register_delta_column('svDisease', 'svD', 'deltaSvDisease')
+register_delta_column('svCorruption', 'svCor', 'deltaSvCorruption')
+
+register_column({
+    id = 'action',
+    label = 'Action',
+    width = 90,
+    flags = ImGuiTableColumnFlags.WidthFixed,
+    draw = function(ctx)
+        if ImGui.SmallButton('Swap##cmp_' .. ctx.id) then
+            if ctx.attempt_swap and ctx.attempt_swap() then
+                ctx.swap_success = true
+            end
+        end
+        if ImGui.IsItemHovered() then
+            if ctx.row.isMainChar then
+                ImGui.SetTooltip('Swap this item to your ' .. (ctx.row.slotname or 'slot'))
+            else
+                ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
+            end
+        end
+    end,
+})
 local get_cached_item_all_stats
 
 local function printf(fmt, ...)
@@ -771,6 +1045,248 @@ get_cached_item_all_stats = function(item)
     return stats
 end
 
+local function clone_list(list)
+    local copy = {}
+    if type(list) == 'table' then
+        for i, v in ipairs(list) do copy[i] = v end
+    end
+    return copy
+end
+
+local function clone_map(tbl)
+    local copy = {}
+    if type(tbl) == 'table' then
+        for k, v in pairs(tbl) do copy[k] = v end
+    end
+    return copy
+end
+
+local function ensure_sections()
+    column_config = column_config or {}
+    column_config.standard = column_config.standard or { order = clone_list(default_column_order), visibility = {} }
+    column_config.advanced = column_config.advanced or { order = clone_list(default_column_order), visibility = {} }
+end
+
+local function normalize_section(section)
+    if not section then return end
+    section.order = section.order or clone_list(default_column_order)
+    local seen = {}
+    local normalized = {}
+    for _, columnId in ipairs(section.order) do
+        if compare_column_defs[columnId] and not seen[columnId] then
+            table.insert(normalized, columnId)
+            seen[columnId] = true
+        end
+    end
+    for _, columnId in ipairs(default_column_order) do
+        if compare_column_defs[columnId] and not seen[columnId] then
+            table.insert(normalized, columnId)
+            seen[columnId] = true
+        end
+    end
+    for columnId, _ in pairs(compare_column_defs) do
+        if not seen[columnId] then
+            table.insert(normalized, columnId)
+            seen[columnId] = true
+        end
+    end
+    section.order = normalized
+    section.visibility = section.visibility or {}
+    for columnId, def in pairs(compare_column_defs) do
+        if section.visibility[columnId] == nil then
+            section.visibility[columnId] = def.default_visible ~= false
+        end
+    end
+end
+
+local function normalize_column_config()
+    ensure_sections()
+    normalize_section(column_config.standard)
+    normalize_section(column_config.advanced)
+end
+
+local function save_column_config()
+    if not has_json or not column_config then return end
+    if not COLUMN_CONFIG_PATH then return end
+    local ok, encoded = pcall(json.encode, column_config, {indent = true})
+    if not ok or not encoded then return end
+    local f, err = io.open(COLUMN_CONFIG_PATH, 'w')
+    if not f then
+        print(string.format('[EmuBot][Upgrade] Failed to open column config for write: %s (%s)', COLUMN_CONFIG_PATH or 'nil', tostring(err)))
+        return
+    end
+    f:write(encoded)
+    f:close()
+end
+
+local function load_column_config()
+    column_config = { standard = { order = clone_list(default_column_order), visibility = {} }, advanced = { order = clone_list(default_column_order), visibility = {} } }
+    if has_json and COLUMN_CONFIG_PATH then
+        local f = io.open(COLUMN_CONFIG_PATH, 'r')
+        if f then
+            local ok, content = pcall(function()
+                local data = f:read('*a')
+                f:close()
+                return data
+            end)
+            if ok and content and content ~= '' then
+                local decoded = json.decode(content)
+                if type(decoded) == 'table' then
+                    if decoded.order and decoded.visibility then
+                        column_config = {
+                            standard = decoded,
+                            advanced = { order = clone_list(decoded.order), visibility = clone_map(decoded.visibility) }
+                        }
+                    else
+                        column_config = decoded
+                    end
+                end
+            end
+        end
+    end
+    normalize_column_config()
+end
+
+local function ensure_column_config_impl()
+    if not column_config then
+        load_column_config()
+    else
+        normalize_column_config()
+    end
+end
+
+ensure_column_config = ensure_column_config_impl
+
+local function reset_column_config()
+    column_config = nil
+    load_column_config()
+    save_column_config()
+end
+
+local function get_current_section()
+    ensure_column_config()
+    local key = U._show_advanced_stats and 'advanced' or 'standard'
+    return column_config[key], key
+end
+
+local function set_column_visibility(columnId, visible)
+    if ALWAYS_VISIBLE_COLUMNS[columnId] then return end
+    local section = get_current_section()
+    if not section then return end
+    section.visibility[columnId] = visible and true or false
+    save_column_config()
+end
+
+local function move_column(columnId, direction)
+    local section = get_current_section()
+    if not section then return end
+    local order = section.order or {}
+    for idx, id in ipairs(order) do
+        if id == columnId then
+            local newIndex = idx + direction
+            if newIndex >= 1 and newIndex <= #order then
+                order[idx], order[newIndex] = order[newIndex], order[idx]
+                save_column_config()
+            end
+            return
+        end
+    end
+end
+
+local function build_active_columns(isWeapon)
+    local section = get_current_section()
+    if not section then return {} end
+    local columns = {}
+    local order = section.order or {}
+    for _, columnId in ipairs(order) do
+        local def = compare_column_defs[columnId]
+        if def then
+            local visible = ALWAYS_VISIBLE_COLUMNS[columnId] or (section.visibility and section.visibility[columnId] ~= false)
+            if visible then
+                if (not def.requires_weapon or isWeapon) and (not def.requires_advanced or U._show_advanced_stats) then
+                    table.insert(columns, def)
+                end
+            end
+        end
+    end
+    return columns
+end
+
+local function build_sort_accessors(activeColumns)
+    local accessors = {}
+    for idx, col in ipairs(activeColumns or {}) do
+        if col.sort_value then
+            accessors[idx] = col.sort_value
+        end
+    end
+    return accessors
+end
+
+local function draw_column_settings_popup()
+    local section, modeKey = get_current_section()
+    if not section then return end
+    if ImGui.BeginPopup('UpgradeCompareColumnsPopup') then
+        local modeLabel = modeKey == 'advanced' and 'Advanced' or 'Standard'
+        ImGui.Text(string.format('Configure %s Columns', modeLabel))
+        ImGui.Separator()
+        if ImGui.Button('Reset to Defaults##upgradeColumnsReset') then
+            reset_column_config()
+            section, modeKey = get_current_section()
+            modeLabel = modeKey == 'advanced' and 'Advanced' or 'Standard'
+        end
+        ImGui.SameLine()
+        ImGui.TextDisabled('Advanced/weapon-only columns become available when applicable')
+        ImGui.Separator()
+        if ImGui.BeginTable('UpgradeColumnConfigTable', 3, ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.ScrollY, ImVec2(0, 260)) then
+            ImGui.TableSetupColumn('Order', ImGuiTableColumnFlags.WidthFixed, 90)
+            ImGui.TableSetupColumn('Column', ImGuiTableColumnFlags.WidthStretch)
+            ImGui.TableSetupColumn('Visible', ImGuiTableColumnFlags.WidthFixed, 70)
+            for _, columnId in ipairs(section.order or {}) do
+                local def = compare_column_defs[columnId]
+                if def then
+                    ImGui.TableNextRow()
+                    ImGui.TableNextColumn()
+                    local upId = string.format('col_up_%s', columnId)
+                    if ImGui.ArrowButton(upId, ImGuiDir.Up) then
+                        move_column(columnId, -1)
+                    end
+                    ImGui.SameLine()
+                    local downId = string.format('col_down_%s', columnId)
+                    if ImGui.ArrowButton(downId, ImGuiDir.Down) then
+                        move_column(columnId, 1)
+                    end
+                    ImGui.TableNextColumn()
+                    local note = ''
+                    if def.requires_weapon then note = note .. ' (Weapon only)' end
+                    if def.requires_advanced then
+                        if note ~= '' then note = note .. ' ' end
+                        note = note .. '(Advanced only)'
+                    end
+                    if ALWAYS_VISIBLE_COLUMNS[columnId] then
+                        if note ~= '' then note = note .. ' ' end
+                        note = note .. '(Always shown)'
+                    end
+                    ImGui.Text(def.label .. note)
+                    ImGui.TableNextColumn()
+                    local visible = ALWAYS_VISIBLE_COLUMNS[columnId] or section.visibility[columnId] ~= false
+                    if ALWAYS_VISIBLE_COLUMNS[columnId] then
+                        ImGui.BeginDisabled()
+                        ImGui.Checkbox('##col_visible_' .. columnId, true)
+                        ImGui.EndDisabled()
+                    else
+                        local newValue, changed = ImGui.Checkbox('##col_visible_' .. columnId, visible)
+                        if changed then
+                            set_column_visibility(columnId, newValue)
+                        end
+                    end
+                end
+            end
+            ImGui.EndTable()
+        end
+        ImGui.EndPopup()
+    end
+end
+
 function U.draw_tab()
     process_pending_refreshes()
     ImGui.Text('Cursor Item:')
@@ -1372,6 +1888,12 @@ function U.draw_compare_window()
     end
     ImGui.SameLine()
     U._show_advanced_stats = ImGui.Checkbox('Advanced Stats##upgradeCompare', U._show_advanced_stats)
+    ImGui.SameLine()
+    if ImGui.Button('Columns##upgradeCompareColumns') then
+        ensure_column_config()
+        ImGui.OpenPopup('UpgradeCompareColumnsPopup')
+    end
+    draw_column_settings_popup()
     ImGui.Separator()
 
     if #U._candidates == 0 then
@@ -1384,13 +1906,14 @@ function U.draw_compare_window()
         return
     end
 
-    -- Determine number of columns based on whether the item is a weapon (removed Upgrade column)
-    local numCols = isWeapon and 10 or 8
-
-    -- Add additional columns if advanced stats are enabled
-    if U._show_advanced_stats then
-        numCols = numCols + 20  -- +7 core stats, +7 heroic stats, +6 resists
+    local activeColumns = build_active_columns(isWeapon)
+    if #activeColumns == 0 then
+        ImGui.TextColored(0.9, 0.4, 0.4, 1.0, 'No columns enabled. Use the Columns button to configure the compare view.')
+        ImGui.End()
+        return
     end
+    local numCols = #activeColumns
+    local sort_accessors = build_sort_accessors(activeColumns)
 
     local compareRows = {}
     for _, row in ipairs(U._candidates or {}) do
@@ -1475,6 +1998,12 @@ function U.draw_compare_window()
             },
         }
 
+        compareEntry.deltaDamage = (upgDamage or 0) - (cDamage or 0)
+        compareEntry.deltaDelay = (upgDelay or 0) - (cDelay or 0)
+        compareEntry.deltaAC = (upgAC or 0) - (cAC or 0)
+        compareEntry.deltaHP = (upgHP or 0) - (cHP or 0)
+        compareEntry.deltaMana = (upgMana or 0) - (cMana or 0)
+
         -- Add advanced stat deltas if enabled
         if U._show_advanced_stats then
             compareEntry.deltaSTR = (upgAllStats.str or 0) - (curAllStats.str or 0)
@@ -1514,263 +2043,47 @@ function U.draw_compare_window()
     end
 
     local function setup_compare_columns()
-        ImGui.TableSetupColumn('Character', ImGuiTableColumnFlags.WidthFixed, 120)
-        ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
-        ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
-        ImGui.TableSetupColumn('Current', ImGuiTableColumnFlags.WidthStretch)
-        if isWeapon then
-            ImGui.TableSetupColumn('Dmg', ImGuiTableColumnFlags.WidthFixed, 60)
-            ImGui.TableSetupColumn('Delay', ImGuiTableColumnFlags.WidthFixed, 70)
+        for _, col in ipairs(activeColumns) do
+            ImGui.TableSetupColumn(col.label, col.flags or ImGuiTableColumnFlags.WidthFixed, col.width or -1)
         end
-        ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
-        ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
-        ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
-
-        if U._show_advanced_stats then
-            -- Core stat columns
-            ImGui.TableSetupColumn('STR', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('DEX', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('AGI', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('STA', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('INT', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('WIS', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('CHA', ImGuiTableColumnFlags.WidthFixed, 50)
-
-            -- Heroic stat columns
-            ImGui.TableSetupColumn('hSTR', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('hDEX', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('hAGI', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('hSTA', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('hINT', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('hWIS', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('hCHA', ImGuiTableColumnFlags.WidthFixed, 50)
-
-            -- Resist columns
-            ImGui.TableSetupColumn('svM', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('svF', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('svC', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('svP', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('svD', ImGuiTableColumnFlags.WidthFixed, 50)
-            ImGui.TableSetupColumn('svCor', ImGuiTableColumnFlags.WidthFixed, 50)
-        end
-
-        ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 90)
         ImGui.TableHeadersRow()
     end
 
     local function sort_specs(rows)
         if not rows or #rows == 0 then return end
         local specs = ImGui.TableGetSortSpecs()
-        if not specs or not specs.SpecsCount or specs.SpecsCount == 0 then return end
-        if isWeapon and U._show_advanced_stats then
-            applyTableSort(rows, specs, {
-                [1] = function(entry) return entry.ref.bot or '' end,
-                [2] = function(entry) return entry.ref.class or '' end,
-                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
-                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
-                [5] = function(entry) return (upgDamage or 0) - (entry.stats.damage or 0) end,
-                [6] = function(entry) return (upgDelay or 0) - (entry.stats.delay or 0) end,
-                [7] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
-                [8] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
-                [9] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
-                [10] = function(entry) return entry.deltaSTR or 0 end,
-                [11] = function(entry) return entry.deltaDEX or 0 end,
-                [12] = function(entry) return entry.deltaAGI or 0 end,
-                [13] = function(entry) return entry.deltaSTA or 0 end,
-                [14] = function(entry) return entry.deltaINT or 0 end,
-                [15] = function(entry) return entry.deltaWIS or 0 end,
-                [16] = function(entry) return entry.deltaCHA or 0 end,
-                [17] = function(entry) return entry.deltaHSTR or 0 end,
-                [18] = function(entry) return entry.deltaHDEX or 0 end,
-                [19] = function(entry) return entry.deltaHAGI or 0 end,
-                [20] = function(entry) return entry.deltaHSTA or 0 end,
-                [21] = function(entry) return entry.deltaHINT or 0 end,
-                [22] = function(entry) return entry.deltaHWIS or 0 end,
-                [23] = function(entry) return entry.deltaHCHA or 0 end,
-                [24] = function(entry) return entry.deltaSvMagic or 0 end,
-                [25] = function(entry) return entry.deltaSvFire or 0 end,
-                [26] = function(entry) return entry.deltaSvCold or 0 end,
-                [27] = function(entry) return entry.deltaSvPoison or 0 end,
-                [28] = function(entry) return entry.deltaSvDisease or 0 end,
-                [29] = function(entry) return entry.deltaSvCorruption or 0 end,
-            })
-        elseif isWeapon then
-            applyTableSort(rows, specs, {
-                [1] = function(entry) return entry.ref.bot or '' end,
-                [2] = function(entry) return entry.ref.class or '' end,
-                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
-                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
-                [5] = function(entry) return (upgDamage or 0) - (entry.stats.damage or 0) end,
-                [6] = function(entry) return (upgDelay or 0) - (entry.stats.delay or 0) end,
-                [7] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
-                [8] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
-                [9] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
-            })
-        elseif U._show_advanced_stats then
-            applyTableSort(rows, specs, {
-                [1] = function(entry) return entry.ref.bot or '' end,
-                [2] = function(entry) return entry.ref.class or '' end,
-                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
-                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
-                [5] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
-                [6] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
-                [7] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
-                [8] = function(entry) return entry.deltaSTR or 0 end,
-                [9] = function(entry) return entry.deltaDEX or 0 end,
-                [10] = function(entry) return entry.deltaAGI or 0 end,
-                [11] = function(entry) return entry.deltaSTA or 0 end,
-                [12] = function(entry) return entry.deltaINT or 0 end,
-                [13] = function(entry) return entry.deltaWIS or 0 end,
-                [14] = function(entry) return entry.deltaCHA or 0 end,
-                [15] = function(entry) return entry.deltaHSTR or 0 end,
-                [16] = function(entry) return entry.deltaHDEX or 0 end,
-                [17] = function(entry) return entry.deltaHAGI or 0 end,
-                [18] = function(entry) return entry.deltaHSTA or 0 end,
-                [19] = function(entry) return entry.deltaHINT or 0 end,
-                [20] = function(entry) return entry.deltaHWIS or 0 end,
-                [21] = function(entry) return entry.deltaHCHA or 0 end,
-                [22] = function(entry) return entry.deltaSvMagic or 0 end,
-                [23] = function(entry) return entry.deltaSvFire or 0 end,
-                [24] = function(entry) return entry.deltaSvCold or 0 end,
-                [25] = function(entry) return entry.deltaSvPoison or 0 end,
-                [26] = function(entry) return entry.deltaSvDisease or 0 end,
-                [27] = function(entry) return entry.deltaSvCorruption or 0 end,
-            })
-        else
-            applyTableSort(rows, specs, {
-                [1] = function(entry) return entry.ref.bot or '' end,
-                [2] = function(entry) return entry.ref.class or '' end,
-                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
-                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
-                [5] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
-                [6] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
-                [7] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
-            })
-        end
+        if not specs then return end
+        applyTableSort(rows, specs, sort_accessors)
     end
 
     local closeAfterSwap = false
 
-    local function render_compare_rows(rows, idPrefix)
-        local function color_damage(delta)
-            if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
-            elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
-            else ImGui.Text('0') end
-        end
-        local function color_delay(delta)
-            if delta < 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, tostring(delta))
-            elseif delta > 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, '+' .. tostring(delta))
-            else ImGui.Text('0') end
-        end
-        local function colortext(delta)
-            if delta > 0 then ImGui.TextColored(0.0, 0.9, 0.0, 1.0, '+' .. tostring(delta))
-            elseif delta < 0 then ImGui.TextColored(0.9, 0.0, 0.0, 1.0, tostring(delta))
-            else ImGui.Text('0') end
+    local function render_compare_rows(rows, idPrefix, columns)
+        if not rows or not columns then return false end
+
+        local function remove_candidate(targetRow)
+            for idx, candidate in ipairs(U._candidates) do
+                if candidate == targetRow then
+                    table.remove(U._candidates, idx)
+                    break
+                end
+            end
         end
 
         for i, entry in ipairs(rows) do
             local row = entry.ref
             local stats = entry.stats
             ImGui.TableNextRow()
-            ImGui.PushID(string.format('%s_%d', idPrefix, i))
+            local ctx = {
+                entry = entry,
+                row = row,
+                stats = stats,
+                curItem = stats.item,
+                id = string.format('%s_%d', idPrefix, i),
+                swap_success = false,
+            }
 
-            local curItem = stats.item
-            local dAC = (upgAC or 0) - (stats.ac or 0)
-            local dHP = (upgHP or 0) - (stats.hp or 0)
-            local dMana = (upgMana or 0) - (stats.mana or 0)
-            local dDamage = (upgDamage or 0) - (stats.damage or 0)
-            local dDelay = (upgDelay or 0) - (stats.delay or 0)
-
-            ImGui.TableNextColumn()
-            local selectableLabel = (row.bot or 'Unknown') .. '##target_' .. string.format('%s_%d', idPrefix, i)
-            if ImGui.Selectable(selectableLabel, false, ImGuiSelectableFlags.None) then
-                if not row.isMainChar then
-                    local botName = row.bot
-                    if botName then
-                        local s = mq.TLO.Spawn(string.format('= %s', botName))
-                        if s and s.ID and s.ID() and s.ID() > 0 then
-                            mq.cmdf('/target id %d', s.ID())
-                            printf('[EmuBot] Targeting %s', botName)
-                        else
-                            mq.cmdf('/target "%s"', botName)
-                            printf('[EmuBot] Attempting to target %s', botName)
-                        end
-                    end
-                end
-            end
-            if ImGui.IsItemHovered() then
-                if row.isMainChar then
-                    ImGui.SetTooltip('This is you')
-                else
-                    ImGui.SetTooltip('Click to target ' .. (row.bot or 'bot'))
-                end
-            end
-
-            ImGui.TableNextColumn(); ImGui.Text(row.class or 'UNK')
-            ImGui.TableNextColumn(); ImGui.Text(row.slotname or ('Slot ' .. tostring(row.slotid or '?')))
-
-            ImGui.TableNextColumn()
-            if curItem and curItem.name and curItem.name ~= '' then
-                if curItem.itemlink and curItem.itemlink ~= '' then
-                    local links = mq.ExtractLinks(curItem.itemlink)
-                    if links and #links > 0 then
-                        if ImGui.Selectable(curItem.name, false, ImGuiSelectableFlags.None) then
-                            if mq.ExecuteTextLink then
-                                mq.ExecuteTextLink(links[1])
-                            end
-                        end
-                        if ImGui.IsItemHovered() then ImGui.SetTooltip('Click to inspect current item') end
-                    else
-                        ImGui.Text(curItem.name)
-                    end
-                else
-                    ImGui.Text(curItem.name)
-                end
-            else
-                ImGui.Text('--')
-            end
-
-            if isWeapon then
-                ImGui.TableNextColumn(); color_damage(dDamage)
-                ImGui.TableNextColumn(); color_delay(dDelay)
-            end
-
-            ImGui.TableNextColumn(); colortext(dAC)
-            ImGui.TableNextColumn(); colortext(dHP)
-            ImGui.TableNextColumn(); colortext(dMana)
-
-            -- Advanced stat deltas (if enabled)
-            if U._show_advanced_stats then
-                -- Core stats
-                ImGui.TableNextColumn(); colortext(entry.deltaSTR)
-                ImGui.TableNextColumn(); colortext(entry.deltaDEX)
-                ImGui.TableNextColumn(); colortext(entry.deltaAGI)
-                ImGui.TableNextColumn(); colortext(entry.deltaSTA)
-                ImGui.TableNextColumn(); colortext(entry.deltaINT)
-                ImGui.TableNextColumn(); colortext(entry.deltaWIS)
-                ImGui.TableNextColumn(); colortext(entry.deltaCHA)
-
-                -- Heroic stats
-                ImGui.TableNextColumn(); colortext(entry.deltaHSTR)
-                ImGui.TableNextColumn(); colortext(entry.deltaHDEX)
-                ImGui.TableNextColumn(); colortext(entry.deltaHAGI)
-                ImGui.TableNextColumn(); colortext(entry.deltaHSTA)
-                ImGui.TableNextColumn(); colortext(entry.deltaHINT)
-                ImGui.TableNextColumn(); colortext(entry.deltaHWIS)
-                ImGui.TableNextColumn(); colortext(entry.deltaHCHA)
-
-                -- Resists
-                ImGui.TableNextColumn(); colortext(entry.deltaSvMagic)
-                ImGui.TableNextColumn(); colortext(entry.deltaSvFire)
-                ImGui.TableNextColumn(); colortext(entry.deltaSvCold)
-                ImGui.TableNextColumn(); colortext(entry.deltaSvPoison)
-                ImGui.TableNextColumn(); colortext(entry.deltaSvDisease)
-                ImGui.TableNextColumn(); colortext(entry.deltaSvCorruption)
-            end
-
-            ImGui.TableNextColumn()
-            local swapped = false
-            if ImGui.SmallButton('Swap##cmp_' .. string.format('%s_%d', idPrefix, i)) then
+            local function attempt_swap()
                 local ok
                 if row.isMainChar then
                     ok = swap_to_main_char(tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
@@ -1778,26 +2091,28 @@ function U.draw_compare_window()
                     ok = swap_to_bot(row.bot, tonumber(row.itemID or 0) or 0, row.slotid, row.slotname, row.itemName)
                 end
                 if ok then
-                    for idx, candidate in ipairs(U._candidates) do
-                        if candidate == row then
-                            table.remove(U._candidates, idx)
-                            break
-                        end
-                    end
-                    swapped = true
-                    closeAfterSwap = true
+                    remove_candidate(row)
+                    return true
                 end
-            end
-            if ImGui.IsItemHovered() then
-                if row.isMainChar then
-                    ImGui.SetTooltip('Swap this item to your ' .. (row.slotname or 'slot'))
-                else
-                    ImGui.SetTooltip('Note: Bot decides actual equip slot; weapons often equip to Primary if eligible')
-                end
+                return false
             end
 
+            ctx.attempt_swap = attempt_swap
+
+            ImGui.PushID(ctx.id)
+            for _, col in ipairs(columns) do
+                ImGui.TableNextColumn()
+                if col.draw then
+                    col.draw(ctx)
+                else
+                    ImGui.Text('--')
+                end
+            end
             ImGui.PopID()
-            if swapped then return true end
+
+            if ctx.swap_success then
+                return true
+            end
         end
         return false
     end
@@ -1807,7 +2122,7 @@ function U.draw_compare_window()
         if ImGui.BeginTable('EmuBotUpgradeCompareMain', numCols,
                 ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable) then
             setup_compare_columns()
-            render_compare_rows(compareMainRows, 'main')
+            render_compare_rows(compareMainRows, 'main', activeColumns)
             ImGui.EndTable()
         end
         ImGui.Spacing()
@@ -1821,7 +2136,7 @@ function U.draw_compare_window()
                 ImGuiTableFlags.Borders + ImGuiTableFlags.RowBg + ImGuiTableFlags.Resizable + ImGuiTableFlags.Sortable) then
             setup_compare_columns()
             sort_specs(compareBotRows)
-            if render_compare_rows(compareBotRows, 'bot') then
+            if render_compare_rows(compareBotRows, 'bot', activeColumns) then
                 closeAfterSwap = true
             end
             ImGui.EndTable()
