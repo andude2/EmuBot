@@ -1,6 +1,11 @@
 local mq = require('mq')
 local ImGui = require('ImGui')
 
+-- Mirror RGMercs setup: ensure core dependencies via PackageMan at startup
+local PackageMan = require('mq.PackageMan')
+PackageMan.Require('lsqlite3')
+PackageMan.Require('luafilesystem', 'lfs')
+
 local bot_inventory = require('modules.bot_inventory')
 local bot_management = require('modules.bot_management')
 local bot_groups = require('modules.bot_groups')
@@ -385,6 +390,38 @@ local function populateStatsFromDisplayItem(target)
     end
 
     local mana = getDisplayItemNumber(item.Mana)
+    local endurance = getDisplayItemNumber(item.Endurance)
+
+    -- Core attributes
+    local str = getDisplayItemNumber(item.STR)
+    local dex = getDisplayItemNumber(item.DEX)
+    local agi = getDisplayItemNumber(item.AGI)
+    local sta = getDisplayItemNumber(item.STA)
+    local intStat = getDisplayItemNumber(item.INT)
+    local wis = getDisplayItemNumber(item.WIS)
+    local cha = getDisplayItemNumber(item.CHA)
+
+    -- Heroic attributes
+    local heroicStr = getDisplayItemNumber(item.HeroicSTR)
+    local heroicDex = getDisplayItemNumber(item.HeroicDEX)
+    local heroicAgi = getDisplayItemNumber(item.HeroicAGI)
+    local heroicSta = getDisplayItemNumber(item.HeroicSTA)
+    local heroicInt = getDisplayItemNumber(item.HeroicINT)
+    local heroicWis = getDisplayItemNumber(item.HeroicWIS)
+    local heroicCha = getDisplayItemNumber(item.HeroicCHA)
+
+    -- Resistances
+    local svMagic = getDisplayItemNumber(item.SVMagic)
+    local svFire = getDisplayItemNumber(item.SVFire)
+    local svCold = getDisplayItemNumber(item.SVCold)
+    local svPoison = getDisplayItemNumber(item.SVPoison)
+    local svDisease = getDisplayItemNumber(item.SVDisease)
+    local svCorruption = getDisplayItemNumber(item.SVCorruption)
+
+    -- Combat stats
+    local attack = getDisplayItemNumber(item.Attack)
+    local haste = getDisplayItemNumber(item.Haste)
+
     -- Prefer top-level DisplayItem fields for weapon stats, then fallback to Item.*
     local damage = 0
     local delay = 0
@@ -396,8 +433,35 @@ local function populateStatsFromDisplayItem(target)
     target.ac = ac
     target.hp = hp
     target.mana = mana
+    target.endurance = endurance
     target.damage = damage
     target.delay = delay
+
+    target.str = str
+    target.dex = dex
+    target.agi = agi
+    target.sta = sta
+    target.int = intStat
+    target.wis = wis
+    target.cha = cha
+
+    target.heroicStr = heroicStr
+    target.heroicDex = heroicDex
+    target.heroicAgi = heroicAgi
+    target.heroicSta = heroicSta
+    target.heroicInt = heroicInt
+    target.heroicWis = heroicWis
+    target.heroicCha = heroicCha
+
+    target.svMagic = svMagic
+    target.svFire = svFire
+    target.svCold = svCold
+    target.svPoison = svPoison
+    target.svDisease = svDisease
+    target.svCorruption = svCorruption
+
+    target.attack = attack
+    target.haste = haste
 
     -- Optional debug: show what DisplayItem reported for weapon stats
     if db and db._debug then
@@ -410,6 +474,12 @@ local function populateStatsFromDisplayItem(target)
     end
 
     local hasNonZero = (ac ~= 0) or (hp ~= 0) or (mana ~= 0) or (damage ~= 0) or (delay ~= 0)
+        or (endurance ~= 0) or (str ~= 0) or (dex ~= 0) or (agi ~= 0) or (sta ~= 0)
+        or (intStat ~= 0) or (wis ~= 0) or (cha ~= 0) or (heroicStr ~= 0) or (heroicDex ~= 0)
+        or (heroicAgi ~= 0) or (heroicSta ~= 0) or (heroicInt ~= 0) or (heroicWis ~= 0)
+        or (heroicCha ~= 0) or (svMagic ~= 0) or (svFire ~= 0) or (svCold ~= 0)
+        or (svPoison ~= 0) or (svDisease ~= 0) or (svCorruption ~= 0) or (attack ~= 0) or (haste ~= 0)
+
     return true, hasNonZero
 end
 
@@ -1251,8 +1321,31 @@ function botUI._processNextScan()
             current.ac = tonumber(cached.ac or current.ac or 0) or 0
             current.hp = tonumber(cached.hp or current.hp or 0) or 0
             current.mana = tonumber(cached.mana or current.mana or 0) or 0
+            current.endurance = tonumber(cached.endurance or current.endurance or 0) or 0
             current.damage = tonumber(cached.damage or current.damage or 0) or 0
             current.delay = tonumber(cached.delay or current.delay or 0) or 0
+            current.str = tonumber(cached.str or current.str or 0) or 0
+            current.dex = tonumber(cached.dex or current.dex or 0) or 0
+            current.agi = tonumber(cached.agi or current.agi or 0) or 0
+            current.sta = tonumber(cached.sta or current.sta or 0) or 0
+            current.int = tonumber(cached.int or current.int or 0) or 0
+            current.wis = tonumber(cached.wis or current.wis or 0) or 0
+            current.cha = tonumber(cached.cha or current.cha or 0) or 0
+            current.heroicStr = tonumber(cached.heroicStr or current.heroicStr or 0) or 0
+            current.heroicDex = tonumber(cached.heroicDex or current.heroicDex or 0) or 0
+            current.heroicAgi = tonumber(cached.heroicAgi or current.heroicAgi or 0) or 0
+            current.heroicSta = tonumber(cached.heroicSta or current.heroicSta or 0) or 0
+            current.heroicInt = tonumber(cached.heroicInt or current.heroicInt or 0) or 0
+            current.heroicWis = tonumber(cached.heroicWis or current.heroicWis or 0) or 0
+            current.heroicCha = tonumber(cached.heroicCha or current.heroicCha or 0) or 0
+            current.svMagic = tonumber(cached.svMagic or current.svMagic or 0) or 0
+            current.svFire = tonumber(cached.svFire or current.svFire or 0) or 0
+            current.svCold = tonumber(cached.svCold or current.svCold or 0) or 0
+            current.svPoison = tonumber(cached.svPoison or current.svPoison or 0) or 0
+            current.svDisease = tonumber(cached.svDisease or current.svDisease or 0) or 0
+            current.svCorruption = tonumber(cached.svCorruption or current.svCorruption or 0) or 0
+            current.attack = tonumber(cached.attack or current.attack or 0) or 0
+            current.haste = tonumber(cached.haste or current.haste or 0) or 0
             local cachedIcon = tonumber(cached.icon or 0) or 0
             if cachedIcon > 0 then
                 current.icon = cachedIcon
@@ -1349,8 +1442,31 @@ function botUI._processNextScan()
                     ac = tonumber(current.ac or 0) or 0,
                     hp = tonumber(current.hp or 0) or 0,
                     mana = tonumber(current.mana or 0) or 0,
+                    endurance = tonumber(current.endurance or 0) or 0,
                     damage = tonumber(current.damage or 0) or 0,
                     delay = tonumber(current.delay or 0) or 0,
+                    str = tonumber(current.str or 0) or 0,
+                    dex = tonumber(current.dex or 0) or 0,
+                    agi = tonumber(current.agi or 0) or 0,
+                    sta = tonumber(current.sta or 0) or 0,
+                    int = tonumber(current.int or 0) or 0,
+                    wis = tonumber(current.wis or 0) or 0,
+                    cha = tonumber(current.cha or 0) or 0,
+                    heroicStr = tonumber(current.heroicStr or 0) or 0,
+                    heroicDex = tonumber(current.heroicDex or 0) or 0,
+                    heroicAgi = tonumber(current.heroicAgi or 0) or 0,
+                    heroicSta = tonumber(current.heroicSta or 0) or 0,
+                    heroicInt = tonumber(current.heroicInt or 0) or 0,
+                    heroicWis = tonumber(current.heroicWis or 0) or 0,
+                    heroicCha = tonumber(current.heroicCha or 0) or 0,
+                    svMagic = tonumber(current.svMagic or 0) or 0,
+                    svFire = tonumber(current.svFire or 0) or 0,
+                    svCold = tonumber(current.svCold or 0) or 0,
+                    svPoison = tonumber(current.svPoison or 0) or 0,
+                    svDisease = tonumber(current.svDisease or 0) or 0,
+                    svCorruption = tonumber(current.svCorruption or 0) or 0,
+                    attack = tonumber(current.attack or 0) or 0,
+                    haste = tonumber(current.haste or 0) or 0,
                     icon = tonumber(current.icon or current.iconID or 0) or 0,
                 }
             end
@@ -1378,16 +1494,51 @@ function botUI._processNextScan()
             elseif not hasNonZero then
                 -- No stats found, but we at least reset them to zero for consistency.
             end
-            local hasUsefulStats = (tonumber(current.ac or 0) > 0) or (tonumber(current.hp or 0) > 0)
-                or (tonumber(current.mana or 0) > 0) or (tonumber(current.damage or 0) > 0)
-                or (tonumber(current.delay or 0) > 0)
+            local hasUsefulStats =
+                (tonumber(current.ac or 0) > 0) or (tonumber(current.hp or 0) > 0)
+                or (tonumber(current.mana or 0) > 0) or (tonumber(current.endurance or 0) > 0)
+                or (tonumber(current.damage or 0) > 0) or (tonumber(current.delay or 0) > 0)
+                or (tonumber(current.str or 0) > 0) or (tonumber(current.dex or 0) > 0)
+                or (tonumber(current.agi or 0) > 0) or (tonumber(current.sta or 0) > 0)
+                or (tonumber(current.int or 0) > 0) or (tonumber(current.wis or 0) > 0)
+                or (tonumber(current.cha or 0) > 0) or (tonumber(current.heroicStr or 0) > 0)
+                or (tonumber(current.heroicDex or 0) > 0) or (tonumber(current.heroicAgi or 0) > 0)
+                or (tonumber(current.heroicSta or 0) > 0) or (tonumber(current.heroicInt or 0) > 0)
+                or (tonumber(current.heroicWis or 0) > 0) or (tonumber(current.heroicCha or 0) > 0)
+                or (tonumber(current.svMagic or 0) > 0) or (tonumber(current.svFire or 0) > 0)
+                or (tonumber(current.svCold or 0) > 0) or (tonumber(current.svPoison or 0) > 0)
+                or (tonumber(current.svDisease or 0) > 0) or (tonumber(current.svCorruption or 0) > 0)
+                or (tonumber(current.attack or 0) > 0) or (tonumber(current.haste or 0) > 0)
             if itemID > 0 and hasUsefulStats then
                 botUI._itemStatCache[itemID] = {
                     ac = tonumber(current.ac or 0) or 0,
                     hp = tonumber(current.hp or 0) or 0,
                     mana = tonumber(current.mana or 0) or 0,
+                    endurance = tonumber(current.endurance or 0) or 0,
                     damage = tonumber(current.damage or 0) or 0,
                     delay = tonumber(current.delay or 0) or 0,
+                    str = tonumber(current.str or 0) or 0,
+                    dex = tonumber(current.dex or 0) or 0,
+                    agi = tonumber(current.agi or 0) or 0,
+                    sta = tonumber(current.sta or 0) or 0,
+                    int = tonumber(current.int or 0) or 0,
+                    wis = tonumber(current.wis or 0) or 0,
+                    cha = tonumber(current.cha or 0) or 0,
+                    heroicStr = tonumber(current.heroicStr or 0) or 0,
+                    heroicDex = tonumber(current.heroicDex or 0) or 0,
+                    heroicAgi = tonumber(current.heroicAgi or 0) or 0,
+                    heroicSta = tonumber(current.heroicSta or 0) or 0,
+                    heroicInt = tonumber(current.heroicInt or 0) or 0,
+                    heroicWis = tonumber(current.heroicWis or 0) or 0,
+                    heroicCha = tonumber(current.heroicCha or 0) or 0,
+                    svMagic = tonumber(current.svMagic or 0) or 0,
+                    svFire = tonumber(current.svFire or 0) or 0,
+                    svCold = tonumber(current.svCold or 0) or 0,
+                    svPoison = tonumber(current.svPoison or 0) or 0,
+                    svDisease = tonumber(current.svDisease or 0) or 0,
+                    svCorruption = tonumber(current.svCorruption or 0) or 0,
+                    attack = tonumber(current.attack or 0) or 0,
+                    haste = tonumber(current.haste or 0) or 0,
                     icon = tonumber(current.icon or current.iconID or 0) or 0,
                 }
             end

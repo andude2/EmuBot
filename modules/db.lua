@@ -5,15 +5,6 @@ local mq = require('mq')
 
 local table_unpack = table.unpack or unpack
 
--- Lightweight logger for early bootstrap (before module debug is set)
-local function _pm_log(fmt, ...)
-    -- Disabled by default; flip to true for troubleshooting
-    local PM_LOG_ENABLED = false
-    if not PM_LOG_ENABLED then return end
-    local msg = string.format(fmt, ...)
-    if mq and mq.printf then mq.printf('%s', msg) else print(msg) end
-end
-
 -- Ensure Lua can find packages installed into <luaDir>/modules
 local function _append_unique(list, suffix)
     if not list or not suffix or suffix == '' then return list end
@@ -39,12 +30,14 @@ local function _ensure_package_paths()
 end
 
 _ensure_package_paths()
-local ok_sqlite, sqlite3 = pcall(require, 'lsqlite3')
+local sqlite3 = require('lsqlite3')
 
 local M = {}
 M._db = nil
 M._db_path = nil
 M._debug = false
+
+local run_migrations  -- forward declaration so helpers can request a schema fix
 
 -- Resolve current character (owner) name for scoping
 local function get_owner_name()
@@ -168,10 +161,6 @@ local function ensure_parent_dir_exists(path)
 end
 
 local function open_db()
-    if not ok_sqlite then
-        printf('[EmuBot][DB] ERROR: lsqlite3 module not found. Please install lsqlite3 for Lua.')
-        return false, 'lsqlite3 not available'
-    end
     local resources = detectResourcesDir() or '.'
     local server = get_server_name()
     local filename = string.format('emubot_%s.sqlite', server:gsub('[^%w%-_%.]', '_'))
@@ -219,8 +208,31 @@ local function exec_ddl()
         ac INTEGER,
         hp INTEGER,
         mana INTEGER,
+        endurance INTEGER,
         damage INTEGER,
         delay INTEGER,
+        str INTEGER,
+        dex INTEGER,
+        agi INTEGER,
+        sta INTEGER,
+        int INTEGER,
+        wis INTEGER,
+        cha INTEGER,
+        heroicStr INTEGER,
+        heroicDex INTEGER,
+        heroicAgi INTEGER,
+        heroicSta INTEGER,
+        heroicInt INTEGER,
+        heroicWis INTEGER,
+        heroicCha INTEGER,
+        svMagic INTEGER,
+        svFire INTEGER,
+        svCold INTEGER,
+        svPoison INTEGER,
+        svDisease INTEGER,
+        svCorruption INTEGER,
+        attack INTEGER,
+        haste INTEGER,
         itemlink TEXT,
         rawline TEXT,
         created_at INTEGER DEFAULT (strftime('%s','now')),
@@ -313,11 +325,39 @@ local function ensure_catalog_entry(it)
     if item_id and item_id <= 0 then item_id = nil end
     local name = sanitize_text(it.name) or sanitize_text(it.itemName) or sanitize_text(it.slotname) or 'Unknown Item'
     local icon = to_int(it.icon or it.iconID)
+    -- Basic stats
     local ac = to_int(it.ac)
     local hp = to_int(it.hp)
     local mana = to_int(it.mana)
+    local endurance = to_int(it.endurance)
     local damage = to_int(it.damage)
     local delay = to_int(it.delay)
+    -- Core attributes
+    local str = to_int(it.str)
+    local dex = to_int(it.dex)
+    local agi = to_int(it.agi)
+    local sta = to_int(it.sta)
+    local int = to_int(it.int)
+    local wis = to_int(it.wis)
+    local cha = to_int(it.cha)
+    -- Heroic stats
+    local heroicStr = to_int(it.heroicStr)
+    local heroicDex = to_int(it.heroicDex)
+    local heroicAgi = to_int(it.heroicAgi)
+    local heroicSta = to_int(it.heroicSta)
+    local heroicInt = to_int(it.heroicInt)
+    local heroicWis = to_int(it.heroicWis)
+    local heroicCha = to_int(it.heroicCha)
+    -- Resistances
+    local svMagic = to_int(it.svMagic)
+    local svFire = to_int(it.svFire)
+    local svCold = to_int(it.svCold)
+    local svPoison = to_int(it.svPoison)
+    local svDisease = to_int(it.svDisease)
+    local svCorruption = to_int(it.svCorruption)
+    -- Combat stats
+    local attack = to_int(it.attack)
+    local haste = to_int(it.haste)
     local itemlink = sanitize_text(it.itemlink)
     local rawline = sanitize_text(it.rawline)
 
@@ -347,22 +387,26 @@ local function ensure_catalog_entry(it)
     end
 
     if not catalog_id then
-        local insert_stmt = M._db:prepare([[INSERT INTO items_catalog(
-            item_id, name, icon, ac, hp, mana, damage, delay, itemlink, rawline,
+        local insert_sql = [[INSERT INTO items_catalog(
+            item_id, name, icon, ac, hp, mana, endurance, damage, delay,
+            str, dex, agi, sta, int, wis, cha,
+            heroicStr, heroicDex, heroicAgi, heroicSta, heroicInt, heroicWis, heroicCha,
+            svMagic, svFire, svCold, svPoison, svDisease, svCorruption,
+            attack, haste, itemlink, rawline,
             created_at, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?, strftime('%s','now'), strftime('%s','now'))]])
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, strftime('%s','now'), strftime('%s','now'))]]
+        local insert_stmt = M._db:prepare(insert_sql)
+        if not insert_stmt then
+            if run_migrations then run_migrations() end
+            insert_stmt = M._db:prepare(insert_sql)
+        end
         if insert_stmt then
             insert_stmt:bind_values(
-                item_id,
-                name,
-                icon,
-                ac,
-                hp,
-                mana,
-                damage,
-                delay,
-                itemlink,
-                rawline
+                item_id, name, icon, ac, hp, mana, endurance, damage, delay,
+                str, dex, agi, sta, int, wis, cha,
+                heroicStr, heroicDex, heroicAgi, heroicSta, heroicInt, heroicWis, heroicCha,
+                svMagic, svFire, svCold, svPoison, svDisease, svCorruption,
+                attack, haste, itemlink, rawline
             )
             local rc = insert_stmt:step()
             if rc ~= sqlite3.DONE then
@@ -377,19 +421,47 @@ local function ensure_catalog_entry(it)
 
     if not catalog_id then return nil end
 
-    local update_stmt = M._db:prepare([[UPDATE items_catalog SET
+    local update_sql = [[UPDATE items_catalog SET
         item_id = CASE WHEN (item_id IS NULL OR item_id = 0) AND ? IS NOT NULL THEN ? ELSE item_id END,
         icon = CASE WHEN (icon IS NULL OR icon = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE icon END,
         ac = CASE WHEN (ac IS NULL OR ac = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE ac END,
         hp = CASE WHEN (hp IS NULL OR hp = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE hp END,
         mana = CASE WHEN (mana IS NULL OR mana = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE mana END,
+        endurance = CASE WHEN (endurance IS NULL OR endurance = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE endurance END,
         damage = CASE WHEN (damage IS NULL OR damage = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE damage END,
         delay = CASE WHEN (delay IS NULL OR delay = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE delay END,
+        str = CASE WHEN (str IS NULL OR str = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE str END,
+        dex = CASE WHEN (dex IS NULL OR dex = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE dex END,
+        agi = CASE WHEN (agi IS NULL OR agi = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE agi END,
+        sta = CASE WHEN (sta IS NULL OR sta = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE sta END,
+        int = CASE WHEN (int IS NULL OR int = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE int END,
+        wis = CASE WHEN (wis IS NULL OR wis = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE wis END,
+        cha = CASE WHEN (cha IS NULL OR cha = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE cha END,
+        heroicStr = CASE WHEN (heroicStr IS NULL OR heroicStr = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE heroicStr END,
+        heroicDex = CASE WHEN (heroicDex IS NULL OR heroicDex = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE heroicDex END,
+        heroicAgi = CASE WHEN (heroicAgi IS NULL OR heroicAgi = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE heroicAgi END,
+        heroicSta = CASE WHEN (heroicSta IS NULL OR heroicSta = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE heroicSta END,
+        heroicInt = CASE WHEN (heroicInt IS NULL OR heroicInt = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE heroicInt END,
+        heroicWis = CASE WHEN (heroicWis IS NULL OR heroicWis = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE heroicWis END,
+        heroicCha = CASE WHEN (heroicCha IS NULL OR heroicCha = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE heroicCha END,
+        svMagic = CASE WHEN (svMagic IS NULL OR svMagic = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE svMagic END,
+        svFire = CASE WHEN (svFire IS NULL OR svFire = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE svFire END,
+        svCold = CASE WHEN (svCold IS NULL OR svCold = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE svCold END,
+        svPoison = CASE WHEN (svPoison IS NULL OR svPoison = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE svPoison END,
+        svDisease = CASE WHEN (svDisease IS NULL OR svDisease = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE svDisease END,
+        svCorruption = CASE WHEN (svCorruption IS NULL OR svCorruption = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE svCorruption END,
+        attack = CASE WHEN (attack IS NULL OR attack = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE attack END,
+        haste = CASE WHEN (haste IS NULL OR haste = 0) AND ? IS NOT NULL AND ? <> 0 THEN ? ELSE haste END,
         name = CASE WHEN (name IS NULL OR name = '') AND ? IS NOT NULL AND ? <> '' THEN ? ELSE name END,
         itemlink = CASE WHEN (itemlink IS NULL OR itemlink = '') AND ? IS NOT NULL AND ? <> '' THEN ? ELSE itemlink END,
         rawline = CASE WHEN (rawline IS NULL OR rawline = '') AND ? IS NOT NULL AND ? <> '' THEN ? ELSE rawline END,
         updated_at = strftime('%s','now')
-        WHERE id = ?]])
+        WHERE id = ?]]
+    local update_stmt = M._db:prepare(update_sql)
+    if not update_stmt then
+        if run_migrations then run_migrations() end
+        update_stmt = M._db:prepare(update_sql)
+    end
     if update_stmt then
         update_stmt:bind_values(
             item_id, item_id,
@@ -397,8 +469,31 @@ local function ensure_catalog_entry(it)
             ac, ac, ac,
             hp, hp, hp,
             mana, mana, mana,
+            endurance, endurance, endurance,
             damage, damage, damage,
             delay, delay, delay,
+            str, str, str,
+            dex, dex, dex,
+            agi, agi, agi,
+            sta, sta, sta,
+            int, int, int,
+            wis, wis, wis,
+            cha, cha, cha,
+            heroicStr, heroicStr, heroicStr,
+            heroicDex, heroicDex, heroicDex,
+            heroicAgi, heroicAgi, heroicAgi,
+            heroicSta, heroicSta, heroicSta,
+            heroicInt, heroicInt, heroicInt,
+            heroicWis, heroicWis, heroicWis,
+            heroicCha, heroicCha, heroicCha,
+            svMagic, svMagic, svMagic,
+            svFire, svFire, svFire,
+            svCold, svCold, svCold,
+            svPoison, svPoison, svPoison,
+            svDisease, svDisease, svDisease,
+            svCorruption, svCorruption, svCorruption,
+            attack, attack, attack,
+            haste, haste, haste,
             name, name, name,
             itemlink, itemlink, itemlink,
             rawline, rawline, rawline,
@@ -468,61 +563,99 @@ local function migrate_legacy_items()
     M._db:exec('DROP TABLE IF EXISTS legacy_items;')
 end
 
-local function run_migrations()
+local function run_migrations_impl()
     if not column_exists('bots', 'owner') then
         M._db:exec('ALTER TABLE bots ADD COLUMN owner TEXT;')
     end
+
+    -- Migrate items_catalog to include advanced stats
+    if table_exists('items_catalog') then
+        -- Add endurance if missing
+        if not column_exists('items_catalog', 'endurance') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN endurance INTEGER;')
+        end
+
+        -- Add core attribute columns if missing
+        if not column_exists('items_catalog', 'str') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN str INTEGER;')
+        end
+        if not column_exists('items_catalog', 'dex') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN dex INTEGER;')
+        end
+        if not column_exists('items_catalog', 'agi') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN agi INTEGER;')
+        end
+        if not column_exists('items_catalog', 'sta') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN sta INTEGER;')
+        end
+        if not column_exists('items_catalog', 'int') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN int INTEGER;')
+        end
+        if not column_exists('items_catalog', 'wis') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN wis INTEGER;')
+        end
+        if not column_exists('items_catalog', 'cha') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN cha INTEGER;')
+        end
+
+        -- Add heroic stat columns if missing
+        if not column_exists('items_catalog', 'heroicStr') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN heroicStr INTEGER;')
+        end
+        if not column_exists('items_catalog', 'heroicDex') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN heroicDex INTEGER;')
+        end
+        if not column_exists('items_catalog', 'heroicAgi') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN heroicAgi INTEGER;')
+        end
+        if not column_exists('items_catalog', 'heroicSta') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN heroicSta INTEGER;')
+        end
+        if not column_exists('items_catalog', 'heroicInt') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN heroicInt INTEGER;')
+        end
+        if not column_exists('items_catalog', 'heroicWis') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN heroicWis INTEGER;')
+        end
+        if not column_exists('items_catalog', 'heroicCha') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN heroicCha INTEGER;')
+        end
+
+        -- Add resistance columns if missing
+        if not column_exists('items_catalog', 'svMagic') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN svMagic INTEGER;')
+        end
+        if not column_exists('items_catalog', 'svFire') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN svFire INTEGER;')
+        end
+        if not column_exists('items_catalog', 'svCold') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN svCold INTEGER;')
+        end
+        if not column_exists('items_catalog', 'svPoison') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN svPoison INTEGER;')
+        end
+        if not column_exists('items_catalog', 'svDisease') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN svDisease INTEGER;')
+        end
+        if not column_exists('items_catalog', 'svCorruption') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN svCorruption INTEGER;')
+        end
+
+        -- Add combat stat columns if missing
+        if not column_exists('items_catalog', 'attack') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN attack INTEGER;')
+        end
+        if not column_exists('items_catalog', 'haste') then
+            M._db:exec('ALTER TABLE items_catalog ADD COLUMN haste INTEGER;')
+        end
+    end
+
     migrate_legacy_items()
 end
 
+run_migrations = run_migrations_impl
+
 function M.init()
-    -- Ensure sqlite dependency at runtime (not during module import)
-    if not ok_sqlite then
-        _pm_log('[EmuBot][DB] lsqlite3 not found. Attempting PackageMan install (runtime)...')
-        local ok_pm, PackageMan = pcall(require, 'mq.PackageMan')
-        if not ok_pm then
-            ok_pm, PackageMan = pcall(require, 'mq/PackageMan')
-        end
-        if ok_pm and PackageMan and type(PackageMan.Require) == 'function' then
-            local ok_install, perr = pcall(function()
-                return PackageMan.Require('lsqlite3')
-            end)
-            if ok_install then
-                _pm_log('[EmuBot][DB] PackageMan.Require("lsqlite3") completed.')
-            else
-                _pm_log('[EmuBot][DB] PackageMan.Require("lsqlite3") failed: %s', tostring(perr))
-            end
-            _ensure_package_paths()
-            -- Diagnostics
-            local lua_dir = nil
-            local ok_ld, res_ld = pcall(function()
-                if type(mq.luaDir) == 'function' then return mq.luaDir() end
-                return mq.luaDir
-            end)
-            if ok_ld and res_ld and res_ld ~= '' then lua_dir = tostring(res_ld) end
-            if lua_dir then
-                _pm_log('[EmuBot][DB] luaDir: %s', lua_dir)
-                local candidate = lua_dir .. '/modules/lsqlite3.dll'
-                local f = io.open(candidate, 'rb')
-                if f then f:close(); _pm_log('[EmuBot][DB] Found candidate: %s', candidate) else _pm_log('[EmuBot][DB] Candidate missing: %s', candidate) end
-            end
-            _pm_log('[EmuBot][DB] package.cpath: %s', tostring(package.cpath))
-            _pm_log('[EmuBot][DB] package.path: %s', tostring(package.path))
-            ok_sqlite, sqlite3 = pcall(require, 'lsqlite3')
-            if ok_sqlite then
-                _pm_log('[EmuBot][DB] Successfully loaded lsqlite3 after install.')
-            else
-                _pm_log('[EmuBot][DB] Still failed to load lsqlite3 after install.')
-            end
-        else
-            _pm_log('[EmuBot][DB] PackageMan not available or missing Require().')
-        end
-    end
-
-    if not ok_sqlite then
-        return false, 'lsqlite3 not available'
-    end
-
     local ok, err = open_db()
     if not ok then return false, err end
     local okddl = exec_ddl()
@@ -548,9 +681,6 @@ function M.migrate()
 end
 
 function M.purge_all()
-    if not ok_sqlite then
-        return false, 'lsqlite3 not available'
-    end
     if not M._db then
         local ok, err = open_db()
         if not ok then return false, err end
@@ -663,9 +793,6 @@ local function delete_missing_bots(tableName, columnName, owner, botNames)
 end
 
 function M.prune_missing_bots(owner, botNames)
-    if not ok_sqlite then
-        return false, 'lsqlite3 not available'
-    end
     if not M._db then
         local ok, err = open_db()
         if not ok then return false, err end
@@ -832,8 +959,31 @@ function M.load_all()
             ic.ac AS catalog_ac,
             ic.hp AS catalog_hp,
             ic.mana AS catalog_mana,
+            ic.endurance AS catalog_endurance,
             ic.damage AS catalog_damage,
-            ic.delay AS catalog_delay
+            ic.delay AS catalog_delay,
+            ic.str AS catalog_str,
+            ic.dex AS catalog_dex,
+            ic.agi AS catalog_agi,
+            ic.sta AS catalog_sta,
+            ic.int AS catalog_int,
+            ic.wis AS catalog_wis,
+            ic.cha AS catalog_cha,
+            ic.heroicStr AS catalog_heroicStr,
+            ic.heroicDex AS catalog_heroicDex,
+            ic.heroicAgi AS catalog_heroicAgi,
+            ic.heroicSta AS catalog_heroicSta,
+            ic.heroicInt AS catalog_heroicInt,
+            ic.heroicWis AS catalog_heroicWis,
+            ic.heroicCha AS catalog_heroicCha,
+            ic.svMagic AS catalog_svMagic,
+            ic.svFire AS catalog_svFire,
+            ic.svCold AS catalog_svCold,
+            ic.svPoison AS catalog_svPoison,
+            ic.svDisease AS catalog_svDisease,
+            ic.svCorruption AS catalog_svCorruption,
+            ic.attack AS catalog_attack,
+            ic.haste AS catalog_haste
         FROM bot_equipment be
         LEFT JOIN items_catalog ic ON ic.id = be.catalog_id
         WHERE be.owner=? AND be.bot_name=? AND be.location=?
@@ -849,11 +999,39 @@ function M.load_all()
                 rawline = r.rawline,
                 itemID = tonumber(r.catalog_item_id),
                 icon = to_int(r.catalog_icon) or 0,
+                -- Basic stats
                 ac = tonumber(r.catalog_ac) or 0,
                 hp = tonumber(r.catalog_hp) or 0,
                 mana = tonumber(r.catalog_mana) or 0,
+                endurance = tonumber(r.catalog_endurance) or 0,
                 damage = tonumber(r.catalog_damage) or 0,
                 delay = tonumber(r.catalog_delay) or 0,
+                -- Core attributes
+                str = tonumber(r.catalog_str) or 0,
+                dex = tonumber(r.catalog_dex) or 0,
+                agi = tonumber(r.catalog_agi) or 0,
+                sta = tonumber(r.catalog_sta) or 0,
+                int = tonumber(r.catalog_int) or 0,
+                wis = tonumber(r.catalog_wis) or 0,
+                cha = tonumber(r.catalog_cha) or 0,
+                -- Heroic stats
+                heroicStr = tonumber(r.catalog_heroicStr) or 0,
+                heroicDex = tonumber(r.catalog_heroicDex) or 0,
+                heroicAgi = tonumber(r.catalog_heroicAgi) or 0,
+                heroicSta = tonumber(r.catalog_heroicSta) or 0,
+                heroicInt = tonumber(r.catalog_heroicInt) or 0,
+                heroicWis = tonumber(r.catalog_heroicWis) or 0,
+                heroicCha = tonumber(r.catalog_heroicCha) or 0,
+                -- Resistances
+                svMagic = tonumber(r.catalog_svMagic) or 0,
+                svFire = tonumber(r.catalog_svFire) or 0,
+                svCold = tonumber(r.catalog_svCold) or 0,
+                svPoison = tonumber(r.catalog_svPoison) or 0,
+                svDisease = tonumber(r.catalog_svDisease) or 0,
+                svCorruption = tonumber(r.catalog_svCorruption) or 0,
+                -- Combat stats
+                attack = tonumber(r.catalog_attack) or 0,
+                haste = tonumber(r.catalog_haste) or 0,
                 qty = tonumber(r.qty) or 0,
                 nodrop = tonumber(r.nodrop) or 0,
                 stackSize = tonumber(r.stackSize),

@@ -418,11 +418,39 @@ local function cloneItemForExport(item)
         icon = item.icon,
         stackSize = item.stackSize,
         charges = item.charges,
+        -- Basic stats
         ac = item.ac,
         hp = item.hp,
         mana = item.mana,
+        endurance = item.endurance,
         damage = item.damage,
         delay = item.delay,
+        -- Core attributes
+        str = item.str,
+        dex = item.dex,
+        agi = item.agi,
+        sta = item.sta,
+        int = item.int,
+        wis = item.wis,
+        cha = item.cha,
+        -- Heroic stats
+        heroicStr = item.heroicStr,
+        heroicDex = item.heroicDex,
+        heroicAgi = item.heroicAgi,
+        heroicSta = item.heroicSta,
+        heroicInt = item.heroicInt,
+        heroicWis = item.heroicWis,
+        heroicCha = item.heroicCha,
+        -- Resistances
+        svMagic = item.svMagic,
+        svFire = item.svFire,
+        svCold = item.svCold,
+        svPoison = item.svPoison,
+        svDisease = item.svDisease,
+        svCorruption = item.svCorruption,
+        -- Combat stats
+        attack = item.attack,
+        haste = item.haste,
         qty = item.qty,
         nodrop = item.nodrop,
     }
@@ -546,8 +574,31 @@ local function encodeSnapshotAsCSV(snapshot)
         "AC",
         "HP",
         "Mana",
+        "Endurance",
         "Damage",
         "Delay",
+        "STR",
+        "DEX",
+        "AGI",
+        "STA",
+        "INT",
+        "WIS",
+        "CHA",
+        "HeroicSTR",
+        "HeroicDEX",
+        "HeroicAGI",
+        "HeroicSTA",
+        "HeroicINT",
+        "HeroicWIS",
+        "HeroicCHA",
+        "SvMagic",
+        "SvFire",
+        "SvCold",
+        "SvPoison",
+        "SvDisease",
+        "SvCorruption",
+        "Attack",
+        "Haste",
         "Icon",
         "Quantity",
         "Charges",
@@ -587,8 +638,31 @@ local function encodeSnapshotAsCSV(snapshot)
                 csvEscape(item.ac),
                 csvEscape(item.hp),
                 csvEscape(item.mana),
+                csvEscape(item.endurance),
                 csvEscape(item.damage),
                 csvEscape(item.delay),
+                csvEscape(item.str),
+                csvEscape(item.dex),
+                csvEscape(item.agi),
+                csvEscape(item.sta),
+                csvEscape(item.int),
+                csvEscape(item.wis),
+                csvEscape(item.cha),
+                csvEscape(item.heroicStr),
+                csvEscape(item.heroicDex),
+                csvEscape(item.heroicAgi),
+                csvEscape(item.heroicSta),
+                csvEscape(item.heroicInt),
+                csvEscape(item.heroicWis),
+                csvEscape(item.heroicCha),
+                csvEscape(item.svMagic),
+                csvEscape(item.svFire),
+                csvEscape(item.svCold),
+                csvEscape(item.svPoison),
+                csvEscape(item.svDisease),
+                csvEscape(item.svCorruption),
+                csvEscape(item.attack),
+                csvEscape(item.haste),
                 csvEscape(item.icon),
                 csvEscape(item.qty),
                 csvEscape(item.charges),
@@ -656,14 +730,50 @@ function BotInventory.parseItemLinkData(itemLinkString)
         if link.type == mq.LinkTypes.Item then
             local parsed = mq.ParseItemLink(link.link)
             -- Best-effort extraction: treat missing fields as nil (unknown)
-            local ac, hp, mana, damage, delay = nil, nil, nil, nil, nil
+            local ac, hp, mana, endurance, damage, delay = nil, nil, nil, nil, nil, nil
+            local str, dex, agi, sta, int, wis, cha = nil, nil, nil, nil, nil, nil, nil
+            local hStr, hDex, hAgi, hSta, hInt, hWis, hCha = nil, nil, nil, nil, nil, nil, nil
+            local svMagic, svFire, svCold, svPoison, svDisease, svCorruption = nil, nil, nil, nil, nil, nil
+            local attack, haste = nil, nil
+
             if parsed then
-                -- First, try fields directly present on parsed
-                ac     = parsed.ac or parsed.AC or ac
-                hp     = parsed.hp or parsed.HP or hp
-                mana   = parsed.mana or parsed.Mana or parsed.MANA or mana
-                damage = parsed.damage or parsed.Damage or damage
-                delay  = parsed.delay or parsed.Delay or delay
+                -- Basic stats
+                ac       = parsed.ac or parsed.AC or ac
+                hp       = parsed.hp or parsed.HP or hp
+                mana     = parsed.mana or parsed.Mana or parsed.MANA or mana
+                endurance = parsed.endurance or parsed.Endurance or endurance
+                damage   = parsed.damage or parsed.Damage or damage
+                delay    = parsed.delay or parsed.Delay or delay
+
+                -- Core attributes
+                str = parsed.str or parsed.STR or str
+                dex = parsed.dex or parsed.DEX or dex
+                agi = parsed.agi or parsed.AGI or agi
+                sta = parsed.sta or parsed.STA or sta
+                int = parsed.int or parsed.INT or int
+                wis = parsed.wis or parsed.WIS or wis
+                cha = parsed.cha or parsed.CHA or cha
+
+                -- Heroic stats
+                hStr = parsed.heroicStr or parsed.HeroicSTR or hStr
+                hDex = parsed.heroicDex or parsed.HeroicDEX or hDex
+                hAgi = parsed.heroicAgi or parsed.HeroicAGI or hAgi
+                hSta = parsed.heroicSta or parsed.HeroicSTA or hSta
+                hInt = parsed.heroicInt or parsed.HeroicINT or hInt
+                hWis = parsed.heroicWis or parsed.HeroicWIS or hWis
+                hCha = parsed.heroicCha or parsed.HeroicCHA or hCha
+
+                -- Resistances
+                svMagic = parsed.svMagic or parsed.SVMagic or svMagic
+                svFire = parsed.svFire or parsed.SVFire or svFire
+                svCold = parsed.svCold or parsed.SVCold or svCold
+                svPoison = parsed.svPoison or parsed.SVPoison or svPoison
+                svDisease = parsed.svDisease or parsed.SVDisease or svDisease
+                svCorruption = parsed.svCorruption or parsed.SVCorruption or svCorruption
+
+                -- Combat stats
+                attack = parsed.attack or parsed.Attack or attack
+                haste = parsed.haste or parsed.Haste or haste
             end
             local iconID = 0
             if parsed then
@@ -681,8 +791,31 @@ function BotInventory.parseItemLinkData(itemLinkString)
                 ac       = ac ~= nil and (tonumber(ac) or 0) or nil,
                 hp       = hp ~= nil and (tonumber(hp) or 0) or nil,
                 mana     = mana ~= nil and (tonumber(mana) or 0) or nil,
+                endurance = endurance ~= nil and (tonumber(endurance) or 0) or nil,
                 damage   = damage ~= nil and (tonumber(damage) or 0) or nil,
                 delay    = delay ~= nil and (tonumber(delay) or 0) or nil,
+                str      = str ~= nil and (tonumber(str) or 0) or nil,
+                dex      = dex ~= nil and (tonumber(dex) or 0) or nil,
+                agi      = agi ~= nil and (tonumber(agi) or 0) or nil,
+                sta      = sta ~= nil and (tonumber(sta) or 0) or nil,
+                int      = int ~= nil and (tonumber(int) or 0) or nil,
+                wis      = wis ~= nil and (tonumber(wis) or 0) or nil,
+                cha      = cha ~= nil and (tonumber(cha) or 0) or nil,
+                heroicStr = hStr ~= nil and (tonumber(hStr) or 0) or nil,
+                heroicDex = hDex ~= nil and (tonumber(hDex) or 0) or nil,
+                heroicAgi = hAgi ~= nil and (tonumber(hAgi) or 0) or nil,
+                heroicSta = hSta ~= nil and (tonumber(hSta) or 0) or nil,
+                heroicInt = hInt ~= nil and (tonumber(hInt) or 0) or nil,
+                heroicWis = hWis ~= nil and (tonumber(hWis) or 0) or nil,
+                heroicCha = hCha ~= nil and (tonumber(hCha) or 0) or nil,
+                svMagic   = svMagic ~= nil and (tonumber(svMagic) or 0) or nil,
+                svFire    = svFire ~= nil and (tonumber(svFire) or 0) or nil,
+                svCold    = svCold ~= nil and (tonumber(svCold) or 0) or nil,
+                svPoison  = svPoison ~= nil and (tonumber(svPoison) or 0) or nil,
+                svDisease = svDisease ~= nil and (tonumber(svDisease) or 0) or nil,
+                svCorruption = svCorruption ~= nil and (tonumber(svCorruption) or 0) or nil,
+                attack    = attack ~= nil and (tonumber(attack) or 0) or nil,
+                haste     = haste ~= nil and (tonumber(haste) or 0) or nil,
             }
         end
     end
@@ -698,6 +831,7 @@ local function cacheItemStats(item)
     local icon = tonumber(item.icon or item.iconID or 0)
     if icon and icon > 0 then cache.icon = icon end
 
+    -- Basic stats
     local ac = tonumber(item.ac or 0)
     if ac and ac ~= 0 then cache.ac = ac end
 
@@ -707,11 +841,84 @@ local function cacheItemStats(item)
     local mana = tonumber(item.mana or 0)
     if mana and mana ~= 0 then cache.mana = mana end
 
+    local endurance = tonumber(item.endurance or 0)
+    if endurance and endurance ~= 0 then cache.endurance = endurance end
+
     local dmg = tonumber(item.damage or 0)
     if dmg and dmg ~= 0 then cache.damage = dmg end
 
     local delay = tonumber(item.delay or 0)
     if delay and delay ~= 0 then cache.delay = delay end
+
+    -- Core attributes
+    local str = tonumber(item.str or 0)
+    if str and str ~= 0 then cache.str = str end
+
+    local dex = tonumber(item.dex or 0)
+    if dex and dex ~= 0 then cache.dex = dex end
+
+    local agi = tonumber(item.agi or 0)
+    if agi and agi ~= 0 then cache.agi = agi end
+
+    local sta = tonumber(item.sta or 0)
+    if sta and sta ~= 0 then cache.sta = sta end
+
+    local int = tonumber(item.int or 0)
+    if int and int ~= 0 then cache.int = int end
+
+    local wis = tonumber(item.wis or 0)
+    if wis and wis ~= 0 then cache.wis = wis end
+
+    local cha = tonumber(item.cha or 0)
+    if cha and cha ~= 0 then cache.cha = cha end
+
+    -- Heroic stats
+    local heroicStr = tonumber(item.heroicStr or 0)
+    if heroicStr and heroicStr ~= 0 then cache.heroicStr = heroicStr end
+
+    local heroicDex = tonumber(item.heroicDex or 0)
+    if heroicDex and heroicDex ~= 0 then cache.heroicDex = heroicDex end
+
+    local heroicAgi = tonumber(item.heroicAgi or 0)
+    if heroicAgi and heroicAgi ~= 0 then cache.heroicAgi = heroicAgi end
+
+    local heroicSta = tonumber(item.heroicSta or 0)
+    if heroicSta and heroicSta ~= 0 then cache.heroicSta = heroicSta end
+
+    local heroicInt = tonumber(item.heroicInt or 0)
+    if heroicInt and heroicInt ~= 0 then cache.heroicInt = heroicInt end
+
+    local heroicWis = tonumber(item.heroicWis or 0)
+    if heroicWis and heroicWis ~= 0 then cache.heroicWis = heroicWis end
+
+    local heroicCha = tonumber(item.heroicCha or 0)
+    if heroicCha and heroicCha ~= 0 then cache.heroicCha = heroicCha end
+
+    -- Resistances
+    local svMagic = tonumber(item.svMagic or 0)
+    if svMagic and svMagic ~= 0 then cache.svMagic = svMagic end
+
+    local svFire = tonumber(item.svFire or 0)
+    if svFire and svFire ~= 0 then cache.svFire = svFire end
+
+    local svCold = tonumber(item.svCold or 0)
+    if svCold and svCold ~= 0 then cache.svCold = svCold end
+
+    local svPoison = tonumber(item.svPoison or 0)
+    if svPoison and svPoison ~= 0 then cache.svPoison = svPoison end
+
+    local svDisease = tonumber(item.svDisease or 0)
+    if svDisease and svDisease ~= 0 then cache.svDisease = svDisease end
+
+    local svCorruption = tonumber(item.svCorruption or 0)
+    if svCorruption and svCorruption ~= 0 then cache.svCorruption = svCorruption end
+
+    -- Combat stats
+    local attack = tonumber(item.attack or 0)
+    if attack and attack ~= 0 then cache.attack = attack end
+
+    local haste = tonumber(item.haste or 0)
+    if haste and haste ~= 0 then cache.haste = haste end
 
     BotInventory._itemStatCache[itemID] = cache
 end
@@ -727,6 +934,8 @@ local function hydrateItemFromCache(item)
         item.icon = cache.icon
         item.iconID = cache.icon
     end
+
+    -- Basic stats
     if (not item.ac or tonumber(item.ac or 0) == 0) and cache.ac then
         item.ac = cache.ac
     end
@@ -736,11 +945,88 @@ local function hydrateItemFromCache(item)
     if (not item.mana or tonumber(item.mana or 0) == 0) and cache.mana then
         item.mana = cache.mana
     end
+    if (not item.endurance or tonumber(item.endurance or 0) == 0) and cache.endurance then
+        item.endurance = cache.endurance
+    end
     if (not item.damage or tonumber(item.damage or 0) == 0) and cache.damage then
         item.damage = cache.damage
     end
     if (not item.delay or tonumber(item.delay or 0) == 0) and cache.delay then
         item.delay = cache.delay
+    end
+
+    -- Core attributes
+    if (not item.str or tonumber(item.str or 0) == 0) and cache.str then
+        item.str = cache.str
+    end
+    if (not item.dex or tonumber(item.dex or 0) == 0) and cache.dex then
+        item.dex = cache.dex
+    end
+    if (not item.agi or tonumber(item.agi or 0) == 0) and cache.agi then
+        item.agi = cache.agi
+    end
+    if (not item.sta or tonumber(item.sta or 0) == 0) and cache.sta then
+        item.sta = cache.sta
+    end
+    if (not item.int or tonumber(item.int or 0) == 0) and cache.int then
+        item.int = cache.int
+    end
+    if (not item.wis or tonumber(item.wis or 0) == 0) and cache.wis then
+        item.wis = cache.wis
+    end
+    if (not item.cha or tonumber(item.cha or 0) == 0) and cache.cha then
+        item.cha = cache.cha
+    end
+
+    -- Heroic stats
+    if (not item.heroicStr or tonumber(item.heroicStr or 0) == 0) and cache.heroicStr then
+        item.heroicStr = cache.heroicStr
+    end
+    if (not item.heroicDex or tonumber(item.heroicDex or 0) == 0) and cache.heroicDex then
+        item.heroicDex = cache.heroicDex
+    end
+    if (not item.heroicAgi or tonumber(item.heroicAgi or 0) == 0) and cache.heroicAgi then
+        item.heroicAgi = cache.heroicAgi
+    end
+    if (not item.heroicSta or tonumber(item.heroicSta or 0) == 0) and cache.heroicSta then
+        item.heroicSta = cache.heroicSta
+    end
+    if (not item.heroicInt or tonumber(item.heroicInt or 0) == 0) and cache.heroicInt then
+        item.heroicInt = cache.heroicInt
+    end
+    if (not item.heroicWis or tonumber(item.heroicWis or 0) == 0) and cache.heroicWis then
+        item.heroicWis = cache.heroicWis
+    end
+    if (not item.heroicCha or tonumber(item.heroicCha or 0) == 0) and cache.heroicCha then
+        item.heroicCha = cache.heroicCha
+    end
+
+    -- Resistances
+    if (not item.svMagic or tonumber(item.svMagic or 0) == 0) and cache.svMagic then
+        item.svMagic = cache.svMagic
+    end
+    if (not item.svFire or tonumber(item.svFire or 0) == 0) and cache.svFire then
+        item.svFire = cache.svFire
+    end
+    if (not item.svCold or tonumber(item.svCold or 0) == 0) and cache.svCold then
+        item.svCold = cache.svCold
+    end
+    if (not item.svPoison or tonumber(item.svPoison or 0) == 0) and cache.svPoison then
+        item.svPoison = cache.svPoison
+    end
+    if (not item.svDisease or tonumber(item.svDisease or 0) == 0) and cache.svDisease then
+        item.svDisease = cache.svDisease
+    end
+    if (not item.svCorruption or tonumber(item.svCorruption or 0) == 0) and cache.svCorruption then
+        item.svCorruption = cache.svCorruption
+    end
+
+    -- Combat stats
+    if (not item.attack or tonumber(item.attack or 0) == 0) and cache.attack then
+        item.attack = cache.attack
+    end
+    if (not item.haste or tonumber(item.haste or 0) == 0) and cache.haste then
+        item.haste = cache.haste
     end
 end
 
@@ -841,11 +1127,39 @@ local function displayBotInventory(line, slotNum, slotName)
             icon = (parsedItem and (parsedItem.iconID or parsedItem.icon or 0)) or 0,
             stackSize = parsedItem and parsedItem.stackSize or nil,
             charges = parsedItem and parsedItem.charges or nil,
+            -- Basic stats
             ac = parsedItem and parsedItem.ac or nil,
             hp = parsedItem and parsedItem.hp or nil,
             mana = parsedItem and parsedItem.mana or nil,
+            endurance = parsedItem and parsedItem.endurance or nil,
             damage = parsedItem and parsedItem.damage or nil,
             delay = parsedItem and parsedItem.delay or nil,
+            -- Core attributes
+            str = parsedItem and parsedItem.str or nil,
+            dex = parsedItem and parsedItem.dex or nil,
+            agi = parsedItem and parsedItem.agi or nil,
+            sta = parsedItem and parsedItem.sta or nil,
+            int = parsedItem and parsedItem.int or nil,
+            wis = parsedItem and parsedItem.wis or nil,
+            cha = parsedItem and parsedItem.cha or nil,
+            -- Heroic stats
+            heroicStr = parsedItem and parsedItem.heroicStr or nil,
+            heroicDex = parsedItem and parsedItem.heroicDex or nil,
+            heroicAgi = parsedItem and parsedItem.heroicAgi or nil,
+            heroicSta = parsedItem and parsedItem.heroicSta or nil,
+            heroicInt = parsedItem and parsedItem.heroicInt or nil,
+            heroicWis = parsedItem and parsedItem.heroicWis or nil,
+            heroicCha = parsedItem and parsedItem.heroicCha or nil,
+            -- Resistances
+            svMagic = parsedItem and parsedItem.svMagic or nil,
+            svFire = parsedItem and parsedItem.svFire or nil,
+            svCold = parsedItem and parsedItem.svCold or nil,
+            svPoison = parsedItem and parsedItem.svPoison or nil,
+            svDisease = parsedItem and parsedItem.svDisease or nil,
+            svCorruption = parsedItem and parsedItem.svCorruption or nil,
+            -- Combat stats
+            attack = parsedItem and parsedItem.attack or nil,
+            haste = parsedItem and parsedItem.haste or nil,
             qty = 1,
             nodrop = 1
         }
@@ -1180,9 +1494,11 @@ end
 --  slotName  - human readable slot name
 --  itemID    - numeric itemID of the cursor item
 --  itemName  - name of the cursor item
---  ac,hp,mana,icon (numbers) - optional stats/icon to set; nil treated as 0
+--  ac,hp,mana,endurance,icon (numbers) - optional stats/icon to set; nil treated as 0
 --  damage,delay (numbers) - optional weapon stats; nil treated as 0
-function BotInventory.applySwapFromCursor(botName, slotID, slotName, itemID, itemName, ac, hp, mana, icon, damage, delay, itemlink, rawline)
+--  itemlink,rawline (strings) - optional item links
+--  ... - additional optional stats (str, dex, agi, sta, int, wis, cha, heroicStr, etc.) passed as table
+function BotInventory.applySwapFromCursor(botName, slotID, slotName, itemID, itemName, ac, hp, mana, icon, damage, delay, itemlink, rawline, additionalStats)
     assert(slotID or slotName, "Must include either a Item Slot ID or Item Slot Name")
     assert(itemName, "Items have to have a name!")
     if not botName or slotID == nil then return false, 'bad args' end
@@ -1190,6 +1506,8 @@ function BotInventory.applySwapFromCursor(botName, slotID, slotName, itemID, ite
     -- Ensure bot cache exists
     local record = ensureBotInventoryRecord(botName)
     local eq = record and record.equipped or {}
+
+    local stats = additionalStats or {}
 
     local newItem = {
         name = itemName,
@@ -1199,11 +1517,39 @@ function BotInventory.applySwapFromCursor(botName, slotID, slotName, itemID, ite
         rawline = rawline,
         itemID = tonumber(itemID) or 0,
         icon = tonumber(icon or 0) or 0,
+        -- Basic stats
         ac = tonumber(ac or 0) or 0,
         hp = tonumber(hp or 0) or 0,
         mana = tonumber(mana or 0) or 0,
+        endurance = tonumber(stats.endurance or 0) or 0,
         damage = tonumber(damage or 0) or 0,
         delay = tonumber(delay or 0) or 0,
+        -- Core attributes
+        str = tonumber(stats.str or 0) or 0,
+        dex = tonumber(stats.dex or 0) or 0,
+        agi = tonumber(stats.agi or 0) or 0,
+        sta = tonumber(stats.sta or 0) or 0,
+        int = tonumber(stats.int or 0) or 0,
+        wis = tonumber(stats.wis or 0) or 0,
+        cha = tonumber(stats.cha or 0) or 0,
+        -- Heroic stats
+        heroicStr = tonumber(stats.heroicStr or 0) or 0,
+        heroicDex = tonumber(stats.heroicDex or 0) or 0,
+        heroicAgi = tonumber(stats.heroicAgi or 0) or 0,
+        heroicSta = tonumber(stats.heroicSta or 0) or 0,
+        heroicInt = tonumber(stats.heroicInt or 0) or 0,
+        heroicWis = tonumber(stats.heroicWis or 0) or 0,
+        heroicCha = tonumber(stats.heroicCha or 0) or 0,
+        -- Resistances
+        svMagic = tonumber(stats.svMagic or 0) or 0,
+        svFire = tonumber(stats.svFire or 0) or 0,
+        svCold = tonumber(stats.svCold or 0) or 0,
+        svPoison = tonumber(stats.svPoison or 0) or 0,
+        svDisease = tonumber(stats.svDisease or 0) or 0,
+        svCorruption = tonumber(stats.svCorruption or 0) or 0,
+        -- Combat stats
+        attack = tonumber(stats.attack or 0) or 0,
+        haste = tonumber(stats.haste or 0) or 0,
         qty = 1,
         nodrop = 1,
     }

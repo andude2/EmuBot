@@ -13,6 +13,7 @@ U._pending_refresh = {}
 U._close_window_on_swap = true
 U._last_cursor_id = nil
 U._level_too_low = false
+U._show_advanced_stats = false
 
 function U.set_close_window_on_swap(value)
     U._close_window_on_swap = value and true or false
@@ -25,6 +26,9 @@ end
 -- Forward declaration so functions defined earlier can call it safely
 local get_cursor_stats
 local get_cursor_weapon_stats
+local get_cursor_all_stats
+local get_item_all_stats
+local get_cached_item_all_stats
 
 local function printf(fmt, ...)
     if mq.printf then mq.printf(fmt, ...) else print(string.format(fmt, ...)) end
@@ -310,6 +314,7 @@ local function swap_to_bot(botName, itemID, slotID, slotName, itemName)
         -- Capture stats/icon/link from the cursor before handing to the bot
         local swapAC, swapHP, swapMana = get_cursor_stats()
         local swapDamage, swapDelay = get_cursor_weapon_stats()
+        local swapAllStats = get_cursor_all_stats()  -- Get all advanced stats
         local swapIcon = 0
         local swapLink, swapRaw = nil, nil
         local cursorTLO = mq.TLO.Cursor
@@ -349,7 +354,8 @@ local function swap_to_bot(botName, itemID, slotID, slotName, itemName)
                 swapDamage,
                 swapDelay,
                 swapLink,
-                swapRaw
+                swapRaw,
+                swapAllStats  -- Pass all advanced stats
             )
             applied = ok and true or false
         end
@@ -634,6 +640,137 @@ get_cursor_stats = function()
     return cur_ac, cur_hp, cur_mana
 end
 
+-- Helper to read all item stats from cursor (for advanced stats view)
+get_cursor_all_stats = function()
+    local cur = mq.TLO.Cursor
+    if not cur or not cur() then return {} end
+
+    local stats = {}
+    -- Basic stats
+    stats.ac = tonumber(cur.AC() or 0) or 0
+    stats.hp = tonumber(cur.HP() or 0) or 0
+    stats.mana = tonumber(cur.Mana() or 0) or 0
+    stats.endurance = tonumber(cur.Endurance() or 0) or 0
+
+    -- Weapon stats
+    stats.damage = tonumber(cur.Damage() or 0) or 0
+    stats.delay = tonumber(cur.ItemDelay() or 0) or 0
+
+    -- Core attributes
+    stats.str = tonumber(cur.STR() or 0) or 0
+    stats.dex = tonumber(cur.DEX() or 0) or 0
+    stats.agi = tonumber(cur.AGI() or 0) or 0
+    stats.sta = tonumber(cur.STA() or 0) or 0
+    stats.int = tonumber(cur.INT() or 0) or 0
+    stats.wis = tonumber(cur.WIS() or 0) or 0
+    stats.cha = tonumber(cur.CHA() or 0) or 0
+
+    -- Heroic stats
+    stats.heroicStr = tonumber(cur.HeroicSTR() or 0) or 0
+    stats.heroicDex = tonumber(cur.HeroicDEX() or 0) or 0
+    stats.heroicAgi = tonumber(cur.HeroicAGI() or 0) or 0
+    stats.heroicSta = tonumber(cur.HeroicSTA() or 0) or 0
+    stats.heroicInt = tonumber(cur.HeroicINT() or 0) or 0
+    stats.heroicWis = tonumber(cur.HeroicWIS() or 0) or 0
+    stats.heroicCha = tonumber(cur.HeroicCHA() or 0) or 0
+
+    -- Resistances
+    stats.svMagic = tonumber((cur.SVMagic and cur.SVMagic()) or 0) or 0
+    stats.svFire = tonumber((cur.SVFire and cur.SVFire()) or 0) or 0
+    stats.svCold = tonumber((cur.SVCold and cur.SVCold()) or 0) or 0
+    stats.svPoison = tonumber((cur.SVPoison and cur.SVPoison()) or 0) or 0
+    stats.svDisease = tonumber((cur.SVDisease and cur.SVDisease()) or 0) or 0
+    stats.svCorruption = tonumber((cur.SVCorruption and cur.SVCorruption()) or 0) or 0
+
+    -- Combat stats
+    stats.attack = tonumber(cur.Attack() or 0) or 0
+    stats.haste = tonumber(cur.Haste() or 0) or 0
+
+    return stats
+end
+
+-- Helper to read all item stats from an itemTLO (for advanced stats view)
+get_item_all_stats = function(itemTLO)
+    if not itemTLO or not itemTLO() then return {} end
+
+    local stats = {}
+    -- Basic stats
+    stats.ac = tonumber(itemTLO.AC() or 0) or 0
+    stats.hp = tonumber(itemTLO.HP() or 0) or 0
+    stats.mana = tonumber(itemTLO.Mana() or 0) or 0
+    stats.endurance = tonumber(itemTLO.Endurance() or 0) or 0
+
+    -- Weapon stats
+    stats.damage = tonumber(itemTLO.Damage() or 0) or 0
+    stats.delay = tonumber(itemTLO.ItemDelay() or 0) or 0
+
+    -- Core attributes
+    stats.str = tonumber(itemTLO.STR() or 0) or 0
+    stats.dex = tonumber(itemTLO.DEX() or 0) or 0
+    stats.agi = tonumber(itemTLO.AGI() or 0) or 0
+    stats.sta = tonumber(itemTLO.STA() or 0) or 0
+    stats.int = tonumber(itemTLO.INT() or 0) or 0
+    stats.wis = tonumber(itemTLO.WIS() or 0) or 0
+    stats.cha = tonumber(itemTLO.CHA() or 0) or 0
+
+    -- Heroic stats
+    stats.heroicStr = tonumber(itemTLO.HeroicSTR() or 0) or 0
+    stats.heroicDex = tonumber(itemTLO.HeroicDEX() or 0) or 0
+    stats.heroicAgi = tonumber(itemTLO.HeroicAGI() or 0) or 0
+    stats.heroicSta = tonumber(itemTLO.HeroicSTA() or 0) or 0
+    stats.heroicInt = tonumber(itemTLO.HeroicINT() or 0) or 0
+    stats.heroicWis = tonumber(itemTLO.HeroicWIS() or 0) or 0
+    stats.heroicCha = tonumber(itemTLO.HeroicCHA() or 0) or 0
+
+    -- Resistances
+    stats.svMagic = tonumber((itemTLO.SVMagic and itemTLO.SVMagic()) or 0) or 0
+    stats.svFire = tonumber((itemTLO.SVFire and itemTLO.SVFire()) or 0) or 0
+    stats.svCold = tonumber((itemTLO.SVCold and itemTLO.SVCold()) or 0) or 0
+    stats.svPoison = tonumber((itemTLO.SVPoison and itemTLO.SVPoison()) or 0) or 0
+    stats.svDisease = tonumber((itemTLO.SVDisease and itemTLO.SVDisease()) or 0) or 0
+    stats.svCorruption = tonumber((itemTLO.SVCorruption and itemTLO.SVCorruption()) or 0) or 0
+
+    -- Combat stats
+    stats.attack = tonumber(itemTLO.Attack() or 0) or 0
+    stats.haste = tonumber(itemTLO.Haste() or 0) or 0
+
+    return stats
+end
+
+local function get_cached_value(item, key)
+    if not item then return 0 end
+    return tonumber(item[key] or 0) or 0
+end
+
+get_cached_item_all_stats = function(item)
+    if not item then return {} end
+    local stats = {}
+    stats.str = get_cached_value(item, 'str')
+    stats.dex = get_cached_value(item, 'dex')
+    stats.agi = get_cached_value(item, 'agi')
+    stats.sta = get_cached_value(item, 'sta')
+    stats.int = get_cached_value(item, 'int')
+    stats.wis = get_cached_value(item, 'wis')
+    stats.cha = get_cached_value(item, 'cha')
+
+    stats.heroicStr = get_cached_value(item, 'heroicStr')
+    stats.heroicDex = get_cached_value(item, 'heroicDex')
+    stats.heroicAgi = get_cached_value(item, 'heroicAgi')
+    stats.heroicSta = get_cached_value(item, 'heroicSta')
+    stats.heroicInt = get_cached_value(item, 'heroicInt')
+    stats.heroicWis = get_cached_value(item, 'heroicWis')
+    stats.heroicCha = get_cached_value(item, 'heroicCha')
+
+    stats.svMagic = get_cached_value(item, 'svMagic')
+    stats.svFire = get_cached_value(item, 'svFire')
+    stats.svCold = get_cached_value(item, 'svCold')
+    stats.svPoison = get_cached_value(item, 'svPoison')
+    stats.svDisease = get_cached_value(item, 'svDisease')
+    stats.svCorruption = get_cached_value(item, 'svCorruption')
+
+    return stats
+end
+
 function U.draw_tab()
     process_pending_refreshes()
     ImGui.Text('Cursor Item:')
@@ -652,6 +789,8 @@ function U.draw_tab()
     if ImGui.Button('Clear##upgrade') then U.clear() end
     ImGui.SameLine()
     if ImGui.Button('Open Compare##upgrade') then U._show_compare = true end
+    ImGui.SameLine()
+    U._show_advanced_stats = ImGui.Checkbox('Advanced Stats##upgrade', U._show_advanced_stats)
 
     ImGui.Separator()
 
@@ -674,15 +813,23 @@ function U.draw_tab()
 
     -- Determine number of columns based on whether the item is a weapon (removed Upgrade column)
     local numCols = isWeapon and 9 or 7
+
+    -- Add additional columns if advanced stats are enabled
+    if U._show_advanced_stats then
+        numCols = numCols + 20  -- +7 core stats, +7 heroic stats, +6 resists
+    end
+
     local upgAC, upgHP, upgMana = get_cursor_stats()
     local upgDamage, upgDelay = get_cursor_weapon_stats()
+    local upgAllStats = U._show_advanced_stats and get_cursor_all_stats() or {}
 
     -- Helper function to build display row data
     local function build_display_row(row)
         local curItem = nil
         local cAC, cHP, cMana = 0, 0, 0
         local cDamage, cDelay = 0, 0
-        
+        local curAllStats = {}
+
         -- Check if this is the main character
         if row.isMainChar then
             -- Get equipped item stats from main character
@@ -691,7 +838,7 @@ function U.draw_tab()
                 cAC = tonumber(equippedItem.AC() or 0) or 0
                 cHP = tonumber(equippedItem.HP() or 0) or 0
                 cMana = tonumber(equippedItem.Mana() or 0) or 0
-                
+
                 if isWeapon then
                     local isCurrentWeapon = is_weapon_type(equippedItem.Type())
                     if isCurrentWeapon then
@@ -699,7 +846,12 @@ function U.draw_tab()
                         cDelay = tonumber(equippedItem.ItemDelay() or 0) or 0
                     end
                 end
-                
+
+                -- Get all stats if advanced mode is enabled
+                if U._show_advanced_stats then
+                    curAllStats = get_item_all_stats(equippedItem)
+                end
+
                 -- Create a minimal curItem structure for display consistency
                 curItem = {
                     name = equippedItem.Name() or '',
@@ -722,11 +874,20 @@ function U.draw_tab()
                         cDamage = tonumber(currentItemTLO.Damage() or 0) or 0
                         cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
                     end
+
+                    -- Get all stats if advanced mode is enabled
+                    if U._show_advanced_stats then
+                        curAllStats = get_item_all_stats(currentItemTLO)
+                    end
                 end
             end
         end
 
-        return {
+        if U._show_advanced_stats and next(curAllStats) == nil and curItem then
+            curAllStats = get_cached_item_all_stats(curItem)
+        end
+
+        local displayRow = {
             ref = row,
             slotname = row.slotname or ('Slot ' .. tostring(row.slotid or '?')),
             current = curItem,
@@ -736,6 +897,34 @@ function U.draw_tab()
             deltaDamage = (upgDamage or 0) - cDamage,
             deltaDelay = (upgDelay or 0) - cDelay,
         }
+
+        -- Add advanced stat deltas if enabled
+        if U._show_advanced_stats then
+            displayRow.deltaSTR = (upgAllStats.str or 0) - (curAllStats.str or 0)
+            displayRow.deltaDEX = (upgAllStats.dex or 0) - (curAllStats.dex or 0)
+            displayRow.deltaAGI = (upgAllStats.agi or 0) - (curAllStats.agi or 0)
+            displayRow.deltaSTA = (upgAllStats.sta or 0) - (curAllStats.sta or 0)
+            displayRow.deltaINT = (upgAllStats.int or 0) - (curAllStats.int or 0)
+            displayRow.deltaWIS = (upgAllStats.wis or 0) - (curAllStats.wis or 0)
+            displayRow.deltaCHA = (upgAllStats.cha or 0) - (curAllStats.cha or 0)
+
+            displayRow.deltaHSTR = (upgAllStats.heroicStr or 0) - (curAllStats.heroicStr or 0)
+            displayRow.deltaHDEX = (upgAllStats.heroicDex or 0) - (curAllStats.heroicDex or 0)
+            displayRow.deltaHAGI = (upgAllStats.heroicAgi or 0) - (curAllStats.heroicAgi or 0)
+            displayRow.deltaHSTA = (upgAllStats.heroicSta or 0) - (curAllStats.heroicSta or 0)
+            displayRow.deltaHINT = (upgAllStats.heroicInt or 0) - (curAllStats.heroicInt or 0)
+            displayRow.deltaHWIS = (upgAllStats.heroicWis or 0) - (curAllStats.heroicWis or 0)
+            displayRow.deltaHCHA = (upgAllStats.heroicCha or 0) - (curAllStats.heroicCha or 0)
+
+            displayRow.deltaSvMagic = (upgAllStats.svMagic or 0) - (curAllStats.svMagic or 0)
+            displayRow.deltaSvFire = (upgAllStats.svFire or 0) - (curAllStats.svFire or 0)
+            displayRow.deltaSvCold = (upgAllStats.svCold or 0) - (curAllStats.svCold or 0)
+            displayRow.deltaSvPoison = (upgAllStats.svPoison or 0) - (curAllStats.svPoison or 0)
+            displayRow.deltaSvDisease = (upgAllStats.svDisease or 0) - (curAllStats.svDisease or 0)
+            displayRow.deltaSvCorruption = (upgAllStats.svCorruption or 0) - (curAllStats.svCorruption or 0)
+        end
+
+        return displayRow
     end
 
     -- Helper function to render table rows
@@ -807,6 +996,35 @@ function U.draw_tab()
             ImGui.TableNextColumn(); colortext(entry.deltaHP)
             ImGui.TableNextColumn(); colortext(entry.deltaMana)
 
+            -- Advanced stat deltas (if enabled)
+            if U._show_advanced_stats then
+                -- Core stats
+                ImGui.TableNextColumn(); colortext(entry.deltaSTR)
+                ImGui.TableNextColumn(); colortext(entry.deltaDEX)
+                ImGui.TableNextColumn(); colortext(entry.deltaAGI)
+                ImGui.TableNextColumn(); colortext(entry.deltaSTA)
+                ImGui.TableNextColumn(); colortext(entry.deltaINT)
+                ImGui.TableNextColumn(); colortext(entry.deltaWIS)
+                ImGui.TableNextColumn(); colortext(entry.deltaCHA)
+
+                -- Heroic stats
+                ImGui.TableNextColumn(); colortext(entry.deltaHSTR)
+                ImGui.TableNextColumn(); colortext(entry.deltaHDEX)
+                ImGui.TableNextColumn(); colortext(entry.deltaHAGI)
+                ImGui.TableNextColumn(); colortext(entry.deltaHSTA)
+                ImGui.TableNextColumn(); colortext(entry.deltaHINT)
+                ImGui.TableNextColumn(); colortext(entry.deltaHWIS)
+                ImGui.TableNextColumn(); colortext(entry.deltaHCHA)
+
+                -- Resists
+                ImGui.TableNextColumn(); colortext(entry.deltaSvMagic)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvFire)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvCold)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvPoison)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvDisease)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvCorruption)
+            end
+
             ImGui.TableNextColumn()
             if ImGui.SmallButton('Swap') then
                 local ok
@@ -861,10 +1079,39 @@ function U.draw_tab()
                 ImGui.TableSetupColumn('Dmg', ImGuiTableColumnFlags.WidthFixed, 60)
                 ImGui.TableSetupColumn('Delay', ImGuiTableColumnFlags.WidthFixed, 70)
             end
-            
+
             ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
             ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
             ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
+
+            if U._show_advanced_stats then
+                -- Core stat columns
+                ImGui.TableSetupColumn('STR', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('DEX', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('AGI', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('STA', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('INT', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('WIS', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('CHA', ImGuiTableColumnFlags.WidthFixed, 50)
+
+                -- Heroic stat columns
+                ImGui.TableSetupColumn('hSTR', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hDEX', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hAGI', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hSTA', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hINT', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hWIS', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hCHA', ImGuiTableColumnFlags.WidthFixed, 50)
+
+                -- Resist columns
+                ImGui.TableSetupColumn('svM', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svF', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svC', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svP', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svD', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svCor', ImGuiTableColumnFlags.WidthFixed, 50)
+            end
+
             ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 120)
             ImGui.TableHeadersRow()
 
@@ -884,20 +1131,49 @@ function U.draw_tab()
             ImGui.TableSetupColumn('Bot', ImGuiTableColumnFlags.WidthFixed, 120)
             ImGui.TableSetupColumn('Class', ImGuiTableColumnFlags.WidthFixed, 60)
             ImGui.TableSetupColumn('Slot', ImGuiTableColumnFlags.WidthFixed, 120)
-            
+
             if isWeapon then
                 ImGui.TableSetupColumn('Dmg', ImGuiTableColumnFlags.WidthFixed, 60)
                 ImGui.TableSetupColumn('Delay', ImGuiTableColumnFlags.WidthFixed, 70)
             end
-            
+
             ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
             ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
             ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
+
+            if U._show_advanced_stats then
+                -- Core stat columns
+                ImGui.TableSetupColumn('STR', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('DEX', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('AGI', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('STA', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('INT', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('WIS', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('CHA', ImGuiTableColumnFlags.WidthFixed, 50)
+
+                -- Heroic stat columns
+                ImGui.TableSetupColumn('hSTR', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hDEX', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hAGI', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hSTA', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hINT', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hWIS', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('hCHA', ImGuiTableColumnFlags.WidthFixed, 50)
+
+                -- Resist columns
+                ImGui.TableSetupColumn('svM', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svF', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svC', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svP', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svD', ImGuiTableColumnFlags.WidthFixed, 50)
+                ImGui.TableSetupColumn('svCor', ImGuiTableColumnFlags.WidthFixed, 50)
+            end
+
             ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 120)
             ImGui.TableHeadersRow()
 
             local sortAccessors
-            if isWeapon then
+            if isWeapon and U._show_advanced_stats then
                 sortAccessors = {
                     [1] = function(entry) return entry.ref.bot or '' end,
                     [2] = function(entry) return entry.ref.class or '' end,
@@ -907,6 +1183,66 @@ function U.draw_tab()
                     [6] = function(entry) return entry.deltaAC or 0 end,
                     [7] = function(entry) return entry.deltaHP or 0 end,
                     [8] = function(entry) return entry.deltaMana or 0 end,
+                    [9] = function(entry) return entry.deltaSTR or 0 end,
+                    [10] = function(entry) return entry.deltaDEX or 0 end,
+                    [11] = function(entry) return entry.deltaAGI or 0 end,
+                    [12] = function(entry) return entry.deltaSTA or 0 end,
+                    [13] = function(entry) return entry.deltaINT or 0 end,
+                    [14] = function(entry) return entry.deltaWIS or 0 end,
+                    [15] = function(entry) return entry.deltaCHA or 0 end,
+                    [16] = function(entry) return entry.deltaHSTR or 0 end,
+                    [17] = function(entry) return entry.deltaHDEX or 0 end,
+                    [18] = function(entry) return entry.deltaHAGI or 0 end,
+                    [19] = function(entry) return entry.deltaHSTA or 0 end,
+                    [20] = function(entry) return entry.deltaHINT or 0 end,
+                    [21] = function(entry) return entry.deltaHWIS or 0 end,
+                    [22] = function(entry) return entry.deltaHCHA or 0 end,
+                    [23] = function(entry) return entry.deltaSvMagic or 0 end,
+                    [24] = function(entry) return entry.deltaSvFire or 0 end,
+                    [25] = function(entry) return entry.deltaSvCold or 0 end,
+                    [26] = function(entry) return entry.deltaSvPoison or 0 end,
+                    [27] = function(entry) return entry.deltaSvDisease or 0 end,
+                    [28] = function(entry) return entry.deltaSvCorruption or 0 end,
+                }
+            elseif isWeapon then
+                sortAccessors = {
+                    [1] = function(entry) return entry.ref.bot or '' end,
+                    [2] = function(entry) return entry.ref.class or '' end,
+                    [3] = function(entry) return entry.slotname or '' end,
+                    [4] = function(entry) return entry.deltaDamage or 0 end,
+                    [5] = function(entry) return entry.deltaDelay or 0 end,
+                    [6] = function(entry) return entry.deltaAC or 0 end,
+                    [7] = function(entry) return entry.deltaHP or 0 end,
+                    [8] = function(entry) return entry.deltaMana or 0 end,
+                }
+            elseif U._show_advanced_stats then
+                sortAccessors = {
+                    [1] = function(entry) return entry.ref.bot or '' end,
+                    [2] = function(entry) return entry.ref.class or '' end,
+                    [3] = function(entry) return entry.slotname or '' end,
+                    [4] = function(entry) return entry.deltaAC or 0 end,
+                    [5] = function(entry) return entry.deltaHP or 0 end,
+                    [6] = function(entry) return entry.deltaMana or 0 end,
+                    [7] = function(entry) return entry.deltaSTR or 0 end,
+                    [8] = function(entry) return entry.deltaDEX or 0 end,
+                    [9] = function(entry) return entry.deltaAGI or 0 end,
+                    [10] = function(entry) return entry.deltaSTA or 0 end,
+                    [11] = function(entry) return entry.deltaINT or 0 end,
+                    [12] = function(entry) return entry.deltaWIS or 0 end,
+                    [13] = function(entry) return entry.deltaCHA or 0 end,
+                    [14] = function(entry) return entry.deltaHSTR or 0 end,
+                    [15] = function(entry) return entry.deltaHDEX or 0 end,
+                    [16] = function(entry) return entry.deltaHAGI or 0 end,
+                    [17] = function(entry) return entry.deltaHSTA or 0 end,
+                    [18] = function(entry) return entry.deltaHINT or 0 end,
+                    [19] = function(entry) return entry.deltaHWIS or 0 end,
+                    [20] = function(entry) return entry.deltaHCHA or 0 end,
+                    [21] = function(entry) return entry.deltaSvMagic or 0 end,
+                    [22] = function(entry) return entry.deltaSvFire or 0 end,
+                    [23] = function(entry) return entry.deltaSvCold or 0 end,
+                    [24] = function(entry) return entry.deltaSvPoison or 0 end,
+                    [25] = function(entry) return entry.deltaSvDisease or 0 end,
+                    [26] = function(entry) return entry.deltaSvCorruption or 0 end,
                 }
             else
                 sortAccessors = {
@@ -1017,7 +1353,8 @@ function U.draw_compare_window()
     local upgName = cur() and (cur.Name() or 'Upgrade Item') or 'Upgrade Item'
     local upgAC, upgHP, upgMana = get_cursor_stats()
     local upgDamage, upgDelay = get_cursor_weapon_stats()
-    
+    local upgAllStats = U._show_advanced_stats and get_cursor_all_stats() or {}
+
     -- Check if the cursor item is a weapon to determine if we should show weapon stats
     local isWeapon = false
     if cur and cur() then
@@ -1033,6 +1370,8 @@ function U.draw_compare_window()
     else
         ImGui.TextColored(goldR, goldG, goldB, 1.0, string.format('(AC %d  HP %d  Mana %d)', upgAC, upgHP, upgMana))
     end
+    ImGui.SameLine()
+    U._show_advanced_stats = ImGui.Checkbox('Advanced Stats##upgradeCompare', U._show_advanced_stats)
     ImGui.Separator()
 
     if #U._candidates == 0 then
@@ -1047,10 +1386,17 @@ function U.draw_compare_window()
 
     -- Determine number of columns based on whether the item is a weapon (removed Upgrade column)
     local numCols = isWeapon and 10 or 8
+
+    -- Add additional columns if advanced stats are enabled
+    if U._show_advanced_stats then
+        numCols = numCols + 20  -- +7 core stats, +7 heroic stats, +6 resists
+    end
+
     local compareRows = {}
     for _, row in ipairs(U._candidates or {}) do
         local curItem = nil
         local cAC, cHP, cMana, cDamage, cDelay = 0, 0, 0, 0, 0
+        local curAllStats = {}
 
         if row.isMainChar then
             local equippedItem = nil
@@ -1063,6 +1409,11 @@ function U.draw_compare_window()
                 cMana = tonumber(equippedItem.Mana() or 0) or 0
                 cDamage = tonumber(equippedItem.Damage() or 0) or 0
                 cDelay = tonumber(equippedItem.ItemDelay() or 0) or 0
+
+                -- Get all stats if advanced mode is enabled
+                if U._show_advanced_stats then
+                    curAllStats = get_item_all_stats(equippedItem)
+                end
 
                 local clickable, raw = nil, nil
                 if equippedItem.ItemLink then
@@ -1098,8 +1449,21 @@ function U.draw_compare_window()
                     cDelay = tonumber(currentItemTLO.ItemDelay() or 0) or 0
                 end
             end
+
+            -- Get all stats if advanced mode is enabled
+            if U._show_advanced_stats and curItem and curItem.name then
+                local currentItemTLO = mq.TLO.FindItem(string.format('= %s', curItem.name or ''))
+                if currentItemTLO and currentItemTLO() then
+                    curAllStats = get_item_all_stats(currentItemTLO)
+                end
+            end
         end
-        table.insert(compareRows, {
+
+        if U._show_advanced_stats and next(curAllStats) == nil and curItem then
+            curAllStats = get_cached_item_all_stats(curItem)
+        end
+
+        local compareEntry = {
             ref = row,
             stats = {
                 item = curItem,
@@ -1109,7 +1473,35 @@ function U.draw_compare_window()
                 damage = cDamage,
                 delay = cDelay,
             },
-        })
+        }
+
+        -- Add advanced stat deltas if enabled
+        if U._show_advanced_stats then
+            compareEntry.deltaSTR = (upgAllStats.str or 0) - (curAllStats.str or 0)
+            compareEntry.deltaDEX = (upgAllStats.dex or 0) - (curAllStats.dex or 0)
+            compareEntry.deltaAGI = (upgAllStats.agi or 0) - (curAllStats.agi or 0)
+            compareEntry.deltaSTA = (upgAllStats.sta or 0) - (curAllStats.sta or 0)
+            compareEntry.deltaINT = (upgAllStats.int or 0) - (curAllStats.int or 0)
+            compareEntry.deltaWIS = (upgAllStats.wis or 0) - (curAllStats.wis or 0)
+            compareEntry.deltaCHA = (upgAllStats.cha or 0) - (curAllStats.cha or 0)
+
+            compareEntry.deltaHSTR = (upgAllStats.heroicStr or 0) - (curAllStats.heroicStr or 0)
+            compareEntry.deltaHDEX = (upgAllStats.heroicDex or 0) - (curAllStats.heroicDex or 0)
+            compareEntry.deltaHAGI = (upgAllStats.heroicAgi or 0) - (curAllStats.heroicAgi or 0)
+            compareEntry.deltaHSTA = (upgAllStats.heroicSta or 0) - (curAllStats.heroicSta or 0)
+            compareEntry.deltaHINT = (upgAllStats.heroicInt or 0) - (curAllStats.heroicInt or 0)
+            compareEntry.deltaHWIS = (upgAllStats.heroicWis or 0) - (curAllStats.heroicWis or 0)
+            compareEntry.deltaHCHA = (upgAllStats.heroicCha or 0) - (curAllStats.heroicCha or 0)
+
+            compareEntry.deltaSvMagic = (upgAllStats.svMagic or 0) - (curAllStats.svMagic or 0)
+            compareEntry.deltaSvFire = (upgAllStats.svFire or 0) - (curAllStats.svFire or 0)
+            compareEntry.deltaSvCold = (upgAllStats.svCold or 0) - (curAllStats.svCold or 0)
+            compareEntry.deltaSvPoison = (upgAllStats.svPoison or 0) - (curAllStats.svPoison or 0)
+            compareEntry.deltaSvDisease = (upgAllStats.svDisease or 0) - (curAllStats.svDisease or 0)
+            compareEntry.deltaSvCorruption = (upgAllStats.svCorruption or 0) - (curAllStats.svCorruption or 0)
+        end
+
+        table.insert(compareRows, compareEntry)
     end
 
     local compareMainRows, compareBotRows = {}, {}
@@ -1133,6 +1525,35 @@ function U.draw_compare_window()
         ImGui.TableSetupColumn('AC', ImGuiTableColumnFlags.WidthFixed, 60)
         ImGui.TableSetupColumn('HP', ImGuiTableColumnFlags.WidthFixed, 60)
         ImGui.TableSetupColumn('Mana', ImGuiTableColumnFlags.WidthFixed, 70)
+
+        if U._show_advanced_stats then
+            -- Core stat columns
+            ImGui.TableSetupColumn('STR', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('DEX', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('AGI', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('STA', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('INT', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('WIS', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('CHA', ImGuiTableColumnFlags.WidthFixed, 50)
+
+            -- Heroic stat columns
+            ImGui.TableSetupColumn('hSTR', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('hDEX', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('hAGI', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('hSTA', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('hINT', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('hWIS', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('hCHA', ImGuiTableColumnFlags.WidthFixed, 50)
+
+            -- Resist columns
+            ImGui.TableSetupColumn('svM', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('svF', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('svC', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('svP', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('svD', ImGuiTableColumnFlags.WidthFixed, 50)
+            ImGui.TableSetupColumn('svCor', ImGuiTableColumnFlags.WidthFixed, 50)
+        end
+
         ImGui.TableSetupColumn('Action', ImGuiTableColumnFlags.WidthFixed, 90)
         ImGui.TableHeadersRow()
     end
@@ -1141,7 +1562,7 @@ function U.draw_compare_window()
         if not rows or #rows == 0 then return end
         local specs = ImGui.TableGetSortSpecs()
         if not specs or not specs.SpecsCount or specs.SpecsCount == 0 then return end
-        if isWeapon then
+        if isWeapon and U._show_advanced_stats then
             applyTableSort(rows, specs, {
                 [1] = function(entry) return entry.ref.bot or '' end,
                 [2] = function(entry) return entry.ref.class or '' end,
@@ -1152,6 +1573,68 @@ function U.draw_compare_window()
                 [7] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
                 [8] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
                 [9] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
+                [10] = function(entry) return entry.deltaSTR or 0 end,
+                [11] = function(entry) return entry.deltaDEX or 0 end,
+                [12] = function(entry) return entry.deltaAGI or 0 end,
+                [13] = function(entry) return entry.deltaSTA or 0 end,
+                [14] = function(entry) return entry.deltaINT or 0 end,
+                [15] = function(entry) return entry.deltaWIS or 0 end,
+                [16] = function(entry) return entry.deltaCHA or 0 end,
+                [17] = function(entry) return entry.deltaHSTR or 0 end,
+                [18] = function(entry) return entry.deltaHDEX or 0 end,
+                [19] = function(entry) return entry.deltaHAGI or 0 end,
+                [20] = function(entry) return entry.deltaHSTA or 0 end,
+                [21] = function(entry) return entry.deltaHINT or 0 end,
+                [22] = function(entry) return entry.deltaHWIS or 0 end,
+                [23] = function(entry) return entry.deltaHCHA or 0 end,
+                [24] = function(entry) return entry.deltaSvMagic or 0 end,
+                [25] = function(entry) return entry.deltaSvFire or 0 end,
+                [26] = function(entry) return entry.deltaSvCold or 0 end,
+                [27] = function(entry) return entry.deltaSvPoison or 0 end,
+                [28] = function(entry) return entry.deltaSvDisease or 0 end,
+                [29] = function(entry) return entry.deltaSvCorruption or 0 end,
+            })
+        elseif isWeapon then
+            applyTableSort(rows, specs, {
+                [1] = function(entry) return entry.ref.bot or '' end,
+                [2] = function(entry) return entry.ref.class or '' end,
+                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
+                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
+                [5] = function(entry) return (upgDamage or 0) - (entry.stats.damage or 0) end,
+                [6] = function(entry) return (upgDelay or 0) - (entry.stats.delay or 0) end,
+                [7] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
+                [8] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
+                [9] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
+            })
+        elseif U._show_advanced_stats then
+            applyTableSort(rows, specs, {
+                [1] = function(entry) return entry.ref.bot or '' end,
+                [2] = function(entry) return entry.ref.class or '' end,
+                [3] = function(entry) return entry.ref.slotname or ('Slot ' .. tostring(entry.ref.slotid or '?')) end,
+                [4] = function(entry) return entry.stats.item and entry.stats.item.name or '' end,
+                [5] = function(entry) return (upgAC or 0) - (entry.stats.ac or 0) end,
+                [6] = function(entry) return (upgHP or 0) - (entry.stats.hp or 0) end,
+                [7] = function(entry) return (upgMana or 0) - (entry.stats.mana or 0) end,
+                [8] = function(entry) return entry.deltaSTR or 0 end,
+                [9] = function(entry) return entry.deltaDEX or 0 end,
+                [10] = function(entry) return entry.deltaAGI or 0 end,
+                [11] = function(entry) return entry.deltaSTA or 0 end,
+                [12] = function(entry) return entry.deltaINT or 0 end,
+                [13] = function(entry) return entry.deltaWIS or 0 end,
+                [14] = function(entry) return entry.deltaCHA or 0 end,
+                [15] = function(entry) return entry.deltaHSTR or 0 end,
+                [16] = function(entry) return entry.deltaHDEX or 0 end,
+                [17] = function(entry) return entry.deltaHAGI or 0 end,
+                [18] = function(entry) return entry.deltaHSTA or 0 end,
+                [19] = function(entry) return entry.deltaHINT or 0 end,
+                [20] = function(entry) return entry.deltaHWIS or 0 end,
+                [21] = function(entry) return entry.deltaHCHA or 0 end,
+                [22] = function(entry) return entry.deltaSvMagic or 0 end,
+                [23] = function(entry) return entry.deltaSvFire or 0 end,
+                [24] = function(entry) return entry.deltaSvCold or 0 end,
+                [25] = function(entry) return entry.deltaSvPoison or 0 end,
+                [26] = function(entry) return entry.deltaSvDisease or 0 end,
+                [27] = function(entry) return entry.deltaSvCorruption or 0 end,
             })
         else
             applyTableSort(rows, specs, {
@@ -1255,6 +1738,35 @@ function U.draw_compare_window()
             ImGui.TableNextColumn(); colortext(dAC)
             ImGui.TableNextColumn(); colortext(dHP)
             ImGui.TableNextColumn(); colortext(dMana)
+
+            -- Advanced stat deltas (if enabled)
+            if U._show_advanced_stats then
+                -- Core stats
+                ImGui.TableNextColumn(); colortext(entry.deltaSTR)
+                ImGui.TableNextColumn(); colortext(entry.deltaDEX)
+                ImGui.TableNextColumn(); colortext(entry.deltaAGI)
+                ImGui.TableNextColumn(); colortext(entry.deltaSTA)
+                ImGui.TableNextColumn(); colortext(entry.deltaINT)
+                ImGui.TableNextColumn(); colortext(entry.deltaWIS)
+                ImGui.TableNextColumn(); colortext(entry.deltaCHA)
+
+                -- Heroic stats
+                ImGui.TableNextColumn(); colortext(entry.deltaHSTR)
+                ImGui.TableNextColumn(); colortext(entry.deltaHDEX)
+                ImGui.TableNextColumn(); colortext(entry.deltaHAGI)
+                ImGui.TableNextColumn(); colortext(entry.deltaHSTA)
+                ImGui.TableNextColumn(); colortext(entry.deltaHINT)
+                ImGui.TableNextColumn(); colortext(entry.deltaHWIS)
+                ImGui.TableNextColumn(); colortext(entry.deltaHCHA)
+
+                -- Resists
+                ImGui.TableNextColumn(); colortext(entry.deltaSvMagic)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvFire)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvCold)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvPoison)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvDisease)
+                ImGui.TableNextColumn(); colortext(entry.deltaSvCorruption)
+            end
 
             ImGui.TableNextColumn()
             local swapped = false
