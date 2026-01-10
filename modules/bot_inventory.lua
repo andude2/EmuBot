@@ -1233,6 +1233,41 @@ function BotInventory.getBotsByScope(scope)
     return result
 end
 
+-- Update cached levels for locally owned bots so upgrade checks don't rely on stale data
+function BotInventory.updateLocalBotLevelsFromMe()
+    local me = mq.TLO.Me
+    if not me then return 0 end
+    local okLevel, lvl = pcall(function() return me.Level() end)
+    if not okLevel or not lvl then return 0 end
+    local myLevel = tonumber(lvl) or 0
+    if myLevel <= 0 then return 0 end
+
+    local updated = 0
+    if BotInventory.bot_list_capture_set then
+        for name, meta in pairs(BotInventory.bot_list_capture_set) do
+            if BotInventory.isBotOwnedLocally and BotInventory.isBotOwnedLocally(name) then
+                if meta then
+                    meta.Level = myLevel
+                    updated = updated + 1
+                end
+            end
+        end
+    end
+
+    if BotInventory.bot_inventories then
+        for name, data in pairs(BotInventory.bot_inventories) do
+            if BotInventory.isBotOwnedLocally and BotInventory.isBotOwnedLocally(name) then
+                if data then
+                    data.level = myLevel
+                    data.Level = myLevel
+                end
+            end
+        end
+    end
+
+    return updated
+end
+
 function BotInventory.refreshBotList()
     if BotInventory.refreshing_bot_list then
         return

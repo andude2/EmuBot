@@ -825,6 +825,9 @@ function U.poll_iu()
         printf('[EmuBot] Put the upgrade item on your cursor before polling.')
         return
     end
+    if bot_inventory and bot_inventory.updateLocalBotLevelsFromMe then
+        bot_inventory.updateLocalBotLevelsFromMe()
+    end
     -- Add main character to comparison first
     add_main_char_candidates()
     printf('[EmuBot] Polling bots with ^iu ...')
