@@ -375,7 +375,9 @@ end
 local function openRaidWindow()
     if not mq.TLO.Window('RaidWindow').Open() then
         mq.TLO.Window('RaidWindow').DoOpen()
-        mq.delay(300, function() return mq.TLO.Window('RaidWindow').Open() end)
+        mq.delay(300, function()
+            return not not mq.TLO.Window('RaidWindow').Open()
+        end)
     end
 end
 
@@ -416,7 +418,9 @@ end
 
 isSpawned = function(name)
     local s = mq.TLO.Spawn(string.format('=%s', name))
-    return s and s() and s.ID() and s.ID() > 0
+    if not s or not s() then return false end
+    local id = s.ID()
+    return type(id) == 'number' and id > 0
 end
 
 local function spawnIfNeeded(name)
@@ -430,7 +434,9 @@ inviteToRaid = function(name)
     mq.cmdf('/raidinvite %s', name)
     if M.live_pc_mode then
         -- If a confirmation dialog appears, click Yes.
-        mq.delay(500, function() return (mq.TLO.Window('ConfirmationDialogBox') and mq.TLO.Window('ConfirmationDialogBox').Open()) end)
+        mq.delay(500, function()
+            return not not mq.TLO.Window('ConfirmationDialogBox').Open()
+        end)
         if mq.TLO.Window('ConfirmationDialogBox') and mq.TLO.Window('ConfirmationDialogBox').Open() then
             mq.cmd('/notify ConfirmationDialogBox CD_Yes_Button leftmouseup')
             mq.delay(150)
